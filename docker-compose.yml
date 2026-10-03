@@ -1,0 +1,81 @@
+name: parking-management-system
+
+x-postgres: &postgres
+  image: postgres:17-alpine
+  restart: unless-stopped
+  environment: &postgres-env
+    POSTGRES_USER: ${POSTGRES_USER:-parking}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-parking}
+
+services:
+  estacionamento-db:
+    <<: *postgres
+    container_name: estacionamento-db
+    environment:
+      <<: *postgres-env
+      POSTGRES_DB: estacionamento
+    ports:
+      - "5433:5432"
+    volumes:
+      - estacionamento-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d estacionamento"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  vagas-db:
+    <<: *postgres
+    container_name: vagas-db
+    environment:
+      <<: *postgres-env
+      POSTGRES_DB: vagas
+    ports:
+      - "5434:5432"
+    volumes:
+      - vagas-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d vagas"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pagamento-db:
+    <<: *postgres
+    container_name: pagamento-db
+    environment:
+      <<: *postgres-env
+      POSTGRES_DB: pagamento
+    ports:
+      - "5435:5432"
+    volumes:
+      - pagamento-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d pagamento"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-parking}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-parking}
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  estacionamento-db-data:
+  vagas-db-data:
+  pagamento-db-data:
+  rabbitmq-data:
