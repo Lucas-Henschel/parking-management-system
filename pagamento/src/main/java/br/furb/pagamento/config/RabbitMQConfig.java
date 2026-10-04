@@ -9,17 +9,20 @@ import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 @Configuration
 public class RabbitMQConfig {
 
     public static final String EXCHANGE = "parking.exchange";
-    public static final String PAGAMENTO_QUEUE = "pagamento.queue";
-    public static final String PAGAMENTO_DLQ = "pagamento.dlq";
+    public static final String PAGAMENTO_QUEUE = "pagamento.calcular.queue";
+    public static final String PAGAMENTO_DLQ = "pagamento.calcular.queue.dlq";
 
-    public static final String CALCULAR_PAGAMENTO_ROUTING_KEY = "calcular.pagamento";
+    public static final String CALCULAR_PAGAMENTO_ROUTING_KEY = "pagamento.calcular";
     public static final String PAGAMENTO_CALCULADO_ROUTING_KEY = "pagamento.calculado";
-    public static final String PAGAMENTO_DLQ_ROUTING_KEY = "pagamento.dlq";
+    public static final String PAGAMENTO_CONFIRMADO_ROUTING_KEY = "pagamento.confirmado";
+    public static final String PAGAMENTO_DLQ_ROUTING_KEY = "pagamento.calcular.dlq";
 
     @Bean
     public TopicExchange parkingExchange() {
@@ -55,6 +58,8 @@ public class RabbitMQConfig {
 
     @Bean
     public MessageConverter messageConverter() {
-        return new JacksonJsonMessageConverter();
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
+        return new JacksonJsonMessageConverter(String.valueOf(mapper));
     }
 }

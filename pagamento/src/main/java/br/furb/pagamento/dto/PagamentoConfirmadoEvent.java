@@ -2,13 +2,12 @@ package br.furb.pagamento.dto;
 
 import br.furb.pagamento.entity.PagamentoStatus;
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.UUID;
 
-public record PagamentoCalculadoEvent(
+public record PagamentoConfirmadoEvent(
         UUID pagamentoId,
         UUID ticketId,
         BigDecimal valor,
-        LocalDateTime data,
+        String metodo,
         PagamentoStatus status
 ) {}

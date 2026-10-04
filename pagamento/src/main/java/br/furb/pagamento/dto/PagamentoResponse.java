@@ -1,7 +1,7 @@
 package br.furb.pagamento.dto;
 
 import br.furb.pagamento.entity.Pagamento;
-
+import br.furb.pagamento.entity.PagamentoStatus;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -12,7 +12,7 @@ public record PagamentoResponse(
         UUID metodoPagamentoId,
         BigDecimal valor,
         LocalDateTime data,
-        String status
+        PagamentoStatus status
 ) {
     public static PagamentoResponse from(Pagamento pagamento) {
         return new PagamentoResponse(

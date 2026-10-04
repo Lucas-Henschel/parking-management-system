@@ -1,10 +1,9 @@
 package br.furb.pagamento.service;
 
-import br.furb.pagamento.dto.CalcularPagamentoRequest;
-import br.furb.pagamento.dto.PagamentoCalculadoEvent;
-import br.furb.pagamento.dto.PagamentoResponse;
+import br.furb.pagamento.dto.*;
 import br.furb.pagamento.entity.MetodoPagamento;
 import br.furb.pagamento.entity.Pagamento;
+import br.furb.pagamento.entity.PagamentoStatus;
 import br.furb.pagamento.exception.PagamentoNaoEncontradoException;
 import br.furb.pagamento.messaging.PagamentoPublisher;
 import br.furb.pagamento.repository.MetodoPagamentoRepository;
@@ -53,320 +52,186 @@ class PagamentoServiceTest {
     @Test
     void deveCalcularPagamentoDeUmaHora() {
         UUID ticketId = UUID.randomUUID();
-        UUID metodoPagamentoId = UUID.randomUUID();
         UUID pagamentoId = UUID.randomUUID();
 
-        LocalDateTime entrada =
-                LocalDateTime.of(2026, 10, 3, 10, 0);
-
+        LocalDateTime entrada = LocalDateTime.of(2026, 10, 3, 10, 0);
         LocalDateTime saida = entrada.plusMinutes(30);
 
-        CalcularPagamentoRequest request = request(
-                ticketId,
-                entrada,
-                saida,
-                metodoPagamentoId
-        );
+        CalcularPagamentoRequest request = new CalcularPagamentoRequest(ticketId, entrada, saida);
 
-        MetodoPagamento metodo =
-                metodo(metodoPagamentoId, "PIX");
+        Pagamento salvo = pagamento(pagamentoId, ticketId, null, new BigDecimal("10.00"), PagamentoStatus.CALCULADO);
 
-        Pagamento salvo = pagamento(
-                pagamentoId,
-                ticketId,
-                metodoPagamentoId,
-                new BigDecimal("10.00")
-        );
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.empty());
+        when(pagamentoRepository.save(any(Pagamento.class))).thenReturn(salvo);
 
-        when(metodoPagamentoRepository.findById(metodoPagamentoId))
-                .thenReturn(Optional.of(metodo));
-
-        when(pagamentoRepository.findByTicketId(ticketId))
-                .thenReturn(Optional.empty());
-
-        when(pagamentoRepository.save(any(Pagamento.class)))
-                .thenReturn(salvo);
-
-        PagamentoCalculadoEvent resultado =
-                service.calcularPagamento(request);
+        PagamentoCalculadoEvent resultado = service.calcularPagamento(request);
 
         assertEquals(pagamentoId, resultado.pagamentoId());
         assertEquals(ticketId, resultado.ticketId());
-        assertEquals(
-                new BigDecimal("10.00"),
-                resultado.valor()
-        );
-        assertEquals("PAGO", resultado.status());
+        assertEquals(new BigDecimal("10.00"), resultado.valor());
+        assertEquals(PagamentoStatus.CALCULADO, resultado.status());
 
         verify(pagamentoRepository).save(any(Pagamento.class));
-        verify(pagamentoPublisher)
-                .publicarPagamentoCalculado(resultado);
+        verify(pagamentoPublisher).publicarPagamentoCalculado(resultado);
     }
 
     @Test
     void deveCobrarDuasHorasQuandoUltrapassarUmaHora() {
         UUID ticketId = UUID.randomUUID();
-        UUID metodoPagamentoId = UUID.randomUUID();
         UUID pagamentoId = UUID.randomUUID();
 
-        LocalDateTime entrada =
-                LocalDateTime.of(2026, 10, 3, 10, 0);
-
+        LocalDateTime entrada = LocalDateTime.of(2026, 10, 3, 10, 0);
         LocalDateTime saida = entrada.plusMinutes(61);
 
-        CalcularPagamentoRequest request = request(
-                ticketId,
-                entrada,
-                saida,
-                metodoPagamentoId
-        );
+        CalcularPagamentoRequest request = new CalcularPagamentoRequest(ticketId, entrada, saida);
 
-        when(metodoPagamentoRepository.findById(metodoPagamentoId))
-                .thenReturn(Optional.of(
-                        metodo(metodoPagamentoId, "PIX")
-                ));
-
-        when(pagamentoRepository.findByTicketId(ticketId))
-                .thenReturn(Optional.empty());
-
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.empty());
         when(pagamentoRepository.save(any(Pagamento.class)))
-                .thenReturn(
-                        pagamento(
-                                pagamentoId,
-                                ticketId,
-                                metodoPagamentoId,
-                                new BigDecimal("20.00")
-                        )
-                );
+                .thenReturn(pagamento(pagamentoId, ticketId, null, new BigDecimal("20.00"), PagamentoStatus.CALCULADO));
 
-        PagamentoCalculadoEvent resultado =
-                service.calcularPagamento(request);
+        PagamentoCalculadoEvent resultado = service.calcularPagamento(request);
 
-        assertEquals(
-                new BigDecimal("20.00"),
-                resultado.valor()
-        );
-    }
-
-    @Test
-    void deveCobrarHoraAdicionalQuandoPeriodoUltrapassarDuasHoras() {
-        UUID ticketId = UUID.randomUUID();
-        UUID metodoPagamentoId = UUID.randomUUID();
-        UUID pagamentoId = UUID.randomUUID();
-
-        LocalDateTime entrada =
-                LocalDateTime.of(2026, 10, 3, 10, 0);
-
-        LocalDateTime saida = entrada.plusMinutes(121);
-
-        CalcularPagamentoRequest request = request(
-                ticketId,
-                entrada,
-                saida,
-                metodoPagamentoId
-        );
-
-        when(metodoPagamentoRepository.findById(metodoPagamentoId))
-                .thenReturn(Optional.of(
-                        metodo(metodoPagamentoId, "PIX")
-                ));
-
-        when(pagamentoRepository.findByTicketId(ticketId))
-                .thenReturn(Optional.empty());
-
-        when(pagamentoRepository.save(any(Pagamento.class)))
-                .thenReturn(
-                        pagamento(
-                                pagamentoId,
-                                ticketId,
-                                metodoPagamentoId,
-                                new BigDecimal("30.00")
-                        )
-                );
-
-        PagamentoCalculadoEvent resultado =
-                service.calcularPagamento(request);
-
-        assertEquals(
-                new BigDecimal("30.00"),
-                resultado.valor()
-        );
+        assertEquals(new BigDecimal("20.00"), resultado.valor());
     }
 
     @Test
     void deveRejeitarSaidaAnteriorOuIgualAEntrada() {
         UUID ticketId = UUID.randomUUID();
-        UUID metodoPagamentoId = UUID.randomUUID();
 
-        LocalDateTime entrada =
-                LocalDateTime.of(2026, 10, 3, 10, 0);
-
-        CalcularPagamentoRequest request = request(
-                ticketId,
-                entrada,
-                entrada,
-                metodoPagamentoId
-        );
+        LocalDateTime entrada = LocalDateTime.of(2026, 10, 3, 10, 0);
+        CalcularPagamentoRequest request = new CalcularPagamentoRequest(ticketId, entrada, entrada);
 
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
                 () -> service.calcularPagamento(request)
         );
 
-        assertEquals(
-                "A saída deve ser posterior à entrada",
-                exception.getMessage()
-        );
-
-        verifyNoInteractions(
-                metodoPagamentoRepository,
-                pagamentoRepository,
-                pagamentoPublisher
-        );
-    }
-
-    @Test
-    void deveRejeitarMetodoDePagamentoInexistente() {
-        UUID ticketId = UUID.randomUUID();
-        UUID metodoPagamentoId = UUID.randomUUID();
-
-        CalcularPagamentoRequest request = request(
-                ticketId,
-                LocalDateTime.of(2026, 10, 3, 10, 0),
-                LocalDateTime.of(2026, 10, 3, 11, 0),
-                metodoPagamentoId
-        );
-
-        when(metodoPagamentoRepository.findById(metodoPagamentoId))
-                .thenReturn(Optional.empty());
-
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> service.calcularPagamento(request)
-        );
-
-        assertEquals(
-                "Método de pagamento não encontrado",
-                exception.getMessage()
-        );
-
-        verify(pagamentoRepository, never()).save(any());
-        verifyNoInteractions(pagamentoPublisher);
+        assertEquals("A saída deve ser posterior à entrada", exception.getMessage());
+        verifyNoInteractions(metodoPagamentoRepository, pagamentoRepository, pagamentoPublisher);
     }
 
     @Test
     void deveReutilizarPagamentoQuandoTicketJaFoiProcessado() {
         UUID ticketId = UUID.randomUUID();
-        UUID metodoPagamentoId = UUID.randomUUID();
         UUID pagamentoId = UUID.randomUUID();
 
-        Pagamento existente = pagamento(
-                pagamentoId,
-                ticketId,
-                metodoPagamentoId,
-                new BigDecimal("20.00")
-        );
+        Pagamento existente = pagamento(pagamentoId, ticketId, null, new BigDecimal("20.00"), PagamentoStatus.CALCULADO);
 
-        CalcularPagamentoRequest request = request(
+        CalcularPagamentoRequest request = new CalcularPagamentoRequest(
                 ticketId,
                 LocalDateTime.of(2026, 10, 3, 10, 0),
-                LocalDateTime.of(2026, 10, 3, 11, 30),
-                metodoPagamentoId
+                LocalDateTime.of(2026, 10, 3, 11, 30)
         );
 
-        when(metodoPagamentoRepository.findById(metodoPagamentoId))
-                .thenReturn(Optional.of(
-                        metodo(metodoPagamentoId, "PIX")
-                ));
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(existente));
 
-        when(pagamentoRepository.findByTicketId(ticketId))
-                .thenReturn(Optional.of(existente));
+        PagamentoCalculadoEvent resultado = service.calcularPagamento(request);
 
-        PagamentoCalculadoEvent resultado =
-                service.calcularPagamento(request);
-
-        assertEquals(
-                pagamentoId,
-                resultado.pagamentoId()
-        );
-
-        assertEquals(
-                ticketId,
-                resultado.ticketId()
-        );
-
-        assertEquals(
-                new BigDecimal("20.00"),
-                resultado.valor()
-        );
+        assertEquals(pagamentoId, resultado.pagamentoId());
+        assertEquals(ticketId, resultado.ticketId());
+        assertEquals(new BigDecimal("20.00"), resultado.valor());
 
         verify(pagamentoRepository, never()).save(any());
-
-        verify(pagamentoPublisher)
-                .publicarPagamentoCalculado(resultado);
+        verify(pagamentoPublisher).publicarPagamentoCalculado(resultado);
     }
 
     @Test
     void deveSalvarDadosCorretosNoPagamento() {
         UUID ticketId = UUID.randomUUID();
-        UUID metodoPagamentoId = UUID.randomUUID();
 
-        LocalDateTime entrada =
-                LocalDateTime.of(2026, 10, 3, 10, 0);
-
+        LocalDateTime entrada = LocalDateTime.of(2026, 10, 3, 10, 0);
         LocalDateTime saida = entrada.plusHours(2);
 
-        CalcularPagamentoRequest request = request(
-                ticketId,
-                entrada,
-                saida,
-                metodoPagamentoId
-        );
+        CalcularPagamentoRequest request = new CalcularPagamentoRequest(ticketId, entrada, saida);
 
-        when(metodoPagamentoRepository.findById(metodoPagamentoId))
-                .thenReturn(Optional.of(
-                        metodo(
-                                metodoPagamentoId,
-                                "CARTAO_CREDITO"
-                        )
-                ));
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.empty());
 
-        when(pagamentoRepository.findByTicketId(ticketId))
-                .thenReturn(Optional.empty());
-
-        when(pagamentoRepository.save(any(Pagamento.class)))
-                .thenAnswer(invocation -> {
-                    Pagamento pagamento =
-                            invocation.getArgument(0);
-
-                    pagamento.setId(UUID.randomUUID());
-                    pagamento.setData(LocalDateTime.now());
-
-                    return pagamento;
-                });
+        when(pagamentoRepository.save(any(Pagamento.class))).thenAnswer(invocation -> {
+            Pagamento pagamento = invocation.getArgument(0);
+            pagamento.setId(UUID.randomUUID());
+            pagamento.setData(LocalDateTime.now());
+            return pagamento;
+        });
 
         service.calcularPagamento(request);
 
-        ArgumentCaptor<Pagamento> captor =
-                ArgumentCaptor.forClass(Pagamento.class);
-
-        verify(pagamentoRepository)
-                .save(captor.capture());
+        ArgumentCaptor<Pagamento> captor = ArgumentCaptor.forClass(Pagamento.class);
+        verify(pagamentoRepository).save(captor.capture());
 
         Pagamento salvo = captor.getValue();
-
         assertEquals(ticketId, salvo.getTicketId());
-        assertEquals(
-                metodoPagamentoId,
-                salvo.getMetodoPagamentoId()
-        );
-        assertEquals(
-                new BigDecimal("20.00"),
-                salvo.getValor()
-        );
-        assertEquals("PAGO", salvo.getStatus());
+        assertNull(salvo.getMetodoPagamentoId());
+        assertEquals(new BigDecimal("20.00"), salvo.getValor());
+        assertEquals(PagamentoStatus.CALCULADO, salvo.getStatus());
         assertNotNull(salvo.getData());
         assertNotNull(salvo.getId());
+    }
+
+    @Test
+    void devePagarComSucesso() {
+        UUID ticketId = UUID.randomUUID();
+        UUID pagamentoId = UUID.randomUUID();
+        UUID metodoPagamentoId = UUID.randomUUID();
+        
+        Pagamento existente = pagamento(pagamentoId, ticketId, null, new BigDecimal("20.00"), PagamentoStatus.CALCULADO);
+        MetodoPagamento metodo = metodo(metodoPagamentoId, "PIX");
+        
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(existente));
+        when(metodoPagamentoRepository.findByNomeMetodo("PIX")).thenReturn(Optional.of(metodo));
+        
+        when(pagamentoRepository.save(any(Pagamento.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        PagamentoResponse response = service.pagar(ticketId, new PagarRequest("PIX"));
+        
+        assertEquals(PagamentoStatus.PAGO, response.status());
+        assertEquals(metodoPagamentoId, response.metodoPagamentoId());
+        
+        verify(pagamentoPublisher).publicarPagamentoConfirmado(any());
+    }
+    
+    @Test
+    void deveRetornarMesmoPagamentoSeJaEstiverPago() {
+        UUID ticketId = UUID.randomUUID();
+        UUID pagamentoId = UUID.randomUUID();
+        UUID metodoPagamentoId = UUID.randomUUID();
+        
+        Pagamento existente = pagamento(pagamentoId, ticketId, metodoPagamentoId, new BigDecimal("20.00"), PagamentoStatus.PAGO);
+        
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(existente));
+
+        PagamentoResponse response = service.pagar(ticketId, new PagarRequest("PIX"));
+        
+        assertEquals(PagamentoStatus.PAGO, response.status());
+        assertEquals(metodoPagamentoId, response.metodoPagamentoId());
+        
+        verify(pagamentoRepository, never()).save(any());
+        verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
+    }
+    
+    @Test
+    void deveDarErroDeNotFoundAoTentarPagarSemCalculo() {
+        UUID ticketId = UUID.randomUUID();
+        
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.empty());
+
+        assertThrows(PagamentoNaoEncontradoException.class, () -> service.pagar(ticketId, new PagarRequest("PIX")));
+        verify(pagamentoRepository, never()).save(any());
+        verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
+    }
+    
+    @Test
+    void deveDarErroAoPagarComMetodoInvalido() {
+        UUID ticketId = UUID.randomUUID();
+        UUID pagamentoId = UUID.randomUUID();
+        
+        Pagamento existente = pagamento(pagamentoId, ticketId, null, new BigDecimal("20.00"), PagamentoStatus.CALCULADO);
+        
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(existente));
+        when(metodoPagamentoRepository.findByNomeMetodo("PIX")).thenReturn(Optional.empty());
+
+        assertThrows(IllegalArgumentException.class, () -> service.pagar(ticketId, new PagarRequest("PIX")));
+        verify(pagamentoRepository, never()).save(any());
+        verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
     }
 
     @Test
@@ -375,49 +240,30 @@ class PagamentoServiceTest {
         UUID ticketId = UUID.randomUUID();
         UUID metodoPagamentoId = UUID.randomUUID();
 
-        Pagamento pagamento = pagamento(
-                pagamentoId,
-                ticketId,
-                metodoPagamentoId,
-                new BigDecimal("20.00")
-        );
+        Pagamento pagamento = pagamento(pagamentoId, ticketId, metodoPagamentoId, new BigDecimal("20.00"), PagamentoStatus.PAGO);
 
-        when(pagamentoRepository.findById(pagamentoId))
-                .thenReturn(Optional.of(pagamento));
+        when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.of(pagamento));
 
-        PagamentoResponse resultado =
-                service.buscarPorId(pagamentoId);
+        PagamentoResponse resultado = service.buscarPorId(pagamentoId);
 
         assertEquals(pagamentoId, resultado.id());
         assertEquals(ticketId, resultado.ticketId());
-        assertEquals(
-                metodoPagamentoId,
-                resultado.metodoPagamentoId()
-        );
-        assertEquals(
-                new BigDecimal("20.00"),
-                resultado.valor()
-        );
-        assertEquals("PAGO", resultado.status());
+        assertEquals(metodoPagamentoId, resultado.metodoPagamentoId());
+        assertEquals(new BigDecimal("20.00"), resultado.valor());
+        assertEquals(PagamentoStatus.PAGO, resultado.status());
     }
 
     @Test
     void deveLancarExcecaoQuandoPagamentoNaoExistir() {
         UUID pagamentoId = UUID.randomUUID();
+        when(pagamentoRepository.findById(pagamentoId)).thenReturn(Optional.empty());
 
-        when(pagamentoRepository.findById(pagamentoId))
-                .thenReturn(Optional.empty());
-
-        PagamentoNaoEncontradoException exception =
-                assertThrows(
-                        PagamentoNaoEncontradoException.class,
-                        () -> service.buscarPorId(pagamentoId)
-                );
-
-        assertEquals(
-                "Pagamento não encontrado: " + pagamentoId,
-                exception.getMessage()
+        PagamentoNaoEncontradoException exception = assertThrows(
+                PagamentoNaoEncontradoException.class,
+                () -> service.buscarPorId(pagamentoId)
         );
+
+        assertEquals("Pagamento não encontrado: " + pagamentoId, exception.getMessage());
     }
 
     @Test
@@ -428,89 +274,33 @@ class PagamentoServiceTest {
         UUID primeiroId = UUID.randomUUID();
         UUID segundoId = UUID.randomUUID();
 
-        Pagamento primeiro = pagamento(
-                primeiroId,
-                ticketId,
-                metodoPagamentoId,
-                new BigDecimal("20.00")
-        );
+        Pagamento primeiro = pagamento(primeiroId, ticketId, metodoPagamentoId, new BigDecimal("20.00"), PagamentoStatus.CALCULADO);
+        Pagamento segundo = pagamento(segundoId, ticketId, metodoPagamentoId, new BigDecimal("30.00"), PagamentoStatus.PAGO);
 
-        Pagamento segundo = pagamento(
-                segundoId,
-                ticketId,
-                metodoPagamentoId,
-                new BigDecimal("30.00")
-        );
+        when(pagamentoRepository.findAllByTicketIdOrderByDataDesc(ticketId)).thenReturn(List.of(primeiro, segundo));
 
-        when(
-                pagamentoRepository
-                        .findAllByTicketIdOrderByDataDesc(ticketId)
-        ).thenReturn(
-                List.of(primeiro, segundo)
-        );
-
-        List<PagamentoResponse> resultado =
-                service.buscarPorTicket(ticketId);
+        List<PagamentoResponse> resultado = service.buscarPorTicket(ticketId);
 
         assertEquals(2, resultado.size());
-
-        assertEquals(
-                primeiroId,
-                resultado.get(0).id()
-        );
-
-        assertEquals(
-                segundoId,
-                resultado.get(1).id()
-        );
-
-        verify(pagamentoRepository)
-                .findAllByTicketIdOrderByDataDesc(ticketId);
+        assertEquals(primeiroId, resultado.get(0).id());
+        assertEquals(segundoId, resultado.get(1).id());
     }
 
-    private CalcularPagamentoRequest request(
-            UUID ticketId,
-            LocalDateTime entrada,
-            LocalDateTime saida,
-            UUID metodoPagamentoId) {
-
-        return new CalcularPagamentoRequest(
-                ticketId,
-                entrada,
-                saida,
-                metodoPagamentoId
-        );
-    }
-
-    private MetodoPagamento metodo(
-            UUID id,
-            String nome) {
-
+    private MetodoPagamento metodo(UUID id, String nome) {
         MetodoPagamento metodo = new MetodoPagamento();
-
         metodo.setId(id);
         metodo.setNomeMetodo(nome);
-
         return metodo;
     }
 
-    private Pagamento pagamento(
-            UUID id,
-            UUID ticketId,
-            UUID metodoPagamentoId,
-            BigDecimal valor) {
-
+    private Pagamento pagamento(UUID id, UUID ticketId, UUID metodoPagamentoId, BigDecimal valor, PagamentoStatus status) {
         Pagamento pagamento = new Pagamento();
-
         pagamento.setId(id);
         pagamento.setTicketId(ticketId);
         pagamento.setMetodoPagamentoId(metodoPagamentoId);
         pagamento.setValor(valor);
-        pagamento.setData(
-                LocalDateTime.of(2026, 10, 3, 12, 0)
-        );
-        pagamento.setStatus("PAGO");
-
+        pagamento.setData(LocalDateTime.of(2026, 10, 3, 12, 0));
+        pagamento.setStatus(status);
         return pagamento;
     }
 }
