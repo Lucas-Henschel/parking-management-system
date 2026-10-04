@@ -13,14 +13,16 @@ import br.furb.pagamento.messaging.PagamentoPublisher;
 import br.furb.pagamento.repository.MetodoPagamentoRepository;
 import br.furb.pagamento.repository.PagamentoRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -58,7 +60,7 @@ public class PagamentoService {
             PagamentoCalculadoEvent evento = new PagamentoCalculadoEvent(
                     existente.getId(), existente.getTicketId(), existente.getValor(), existente.getData(), existente.getStatus()
             );
-            pagamentoPublisher.publicarPagamentoCalculado(evento);
+            publicarAposCommit(() -> pagamentoPublisher.publicarPagamentoCalculado(evento));
             return evento;
         }
 
@@ -73,26 +75,49 @@ public class PagamentoService {
         pagamento.setData(LocalDateTime.now());
         pagamento.setStatus(PagamentoStatus.CALCULADO);
 
-        Pagamento salvo = pagamentoRepository.save(pagamento);
+        try {
+            Pagamento salvo = pagamentoRepository.save(pagamento);
 
-        PagamentoCalculadoEvent evento = new PagamentoCalculadoEvent(
-                salvo.getId(), salvo.getTicketId(), salvo.getValor(), salvo.getData(), salvo.getStatus()
-        );
-        pagamentoPublisher.publicarPagamentoCalculado(evento);
-        return evento;
+            PagamentoCalculadoEvent evento = new PagamentoCalculadoEvent(
+                    salvo.getId(), salvo.getTicketId(), salvo.getValor(), salvo.getData(), salvo.getStatus()
+            );
+            publicarAposCommit(() -> pagamentoPublisher.publicarPagamentoCalculado(evento));
+            return evento;
+        } catch (DataIntegrityViolationException e) {
+            // Violação de UNIQUE constraint em ticket_id - outro processo já criou o pagamento
+            // Recarregar o pagamento existente e republicar o evento
+            Pagamento pagamentoExistente = pagamentoRepository.findByTicketId(request.ticketId())
+                    .orElseThrow(() -> new IllegalStateException("Pagamento não encontrado após violação de constraint"));
+            
+            PagamentoCalculadoEvent evento = new PagamentoCalculadoEvent(
+                    pagamentoExistente.getId(), 
+                    pagamentoExistente.getTicketId(), 
+                    pagamentoExistente.getValor(), 
+                    pagamentoExistente.getData(), 
+                    pagamentoExistente.getStatus()
+            );
+            publicarAposCommit(() -> pagamentoPublisher.publicarPagamentoCalculado(evento));
+            return evento;
+        }
     }
     
     @Transactional
     public PagamentoResponse pagar(UUID ticketId, PagarRequest request) {
-        Pagamento pagamento = pagamentoRepository.findByTicketId(ticketId)
+        Pagamento pagamento = pagamentoRepository.findByTicketIdForUpdate(ticketId)
                 .orElseThrow(() -> new PagamentoNaoEncontradoException(ticketId));
                 
         if (pagamento.getStatus() == PagamentoStatus.PAGO) {
             return PagamentoResponse.from(pagamento);
         }
         
-        MetodoPagamento metodo = metodoPagamentoRepository.findByNomeMetodo(request.metodo())
-                .orElseThrow(() -> new IllegalArgumentException("Método de pagamento não encontrado"));
+        if (pagamento.getStatus() != PagamentoStatus.CALCULADO) {
+            throw new IllegalStateException("Pagamento deve estar no status CALCULADO para ser pago");
+        }
+        
+        String metodoNormalizado = request.metodo().toUpperCase();
+        MetodoPagamento metodo = metodoPagamentoRepository.findByNomeMetodoIgnoreCase(metodoNormalizado)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        String.format("Método de pagamento '%s' não encontrado", request.metodo())));
                 
         pagamento.setMetodoPagamentoId(metodo.getId());
         pagamento.setStatus(PagamentoStatus.PAGO);
@@ -106,7 +131,7 @@ public class PagamentoService {
                 metodo.getNomeMetodo(),
                 salvo.getStatus()
         );
-        pagamentoPublisher.publicarPagamentoConfirmado(evento);
+        publicarAposCommit(() -> pagamentoPublisher.publicarPagamentoConfirmado(evento));
         
         return PagamentoResponse.from(salvo);
     }
@@ -116,8 +141,18 @@ public class PagamentoService {
                 .orElseThrow(() -> new PagamentoNaoEncontradoException(id));
     }
 
-    public List<PagamentoResponse> buscarPorTicket(UUID ticketId) {
-        return pagamentoRepository.findAllByTicketIdOrderByDataDesc(ticketId)
-                .stream().map(PagamentoResponse::from).toList();
+    public PagamentoResponse buscarPorTicket(UUID ticketId) {
+        return pagamentoRepository.findByTicketId(ticketId)
+                .map(PagamentoResponse::from)
+                .orElseThrow(() -> new PagamentoNaoEncontradoException(ticketId));
+    }
+    
+    private void publicarAposCommit(Runnable action) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                action.run();
+            }
+        });
     }
 }

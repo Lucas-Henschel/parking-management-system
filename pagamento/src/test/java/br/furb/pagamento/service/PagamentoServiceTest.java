@@ -17,7 +17,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -176,8 +175,8 @@ class PagamentoServiceTest {
         Pagamento existente = pagamento(pagamentoId, ticketId, null, new BigDecimal("20.00"), PagamentoStatus.CALCULADO);
         MetodoPagamento metodo = metodo(metodoPagamentoId, "PIX");
         
-        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(existente));
-        when(metodoPagamentoRepository.findByNomeMetodo("PIX")).thenReturn(Optional.of(metodo));
+        when(pagamentoRepository.findByTicketIdForUpdate(ticketId)).thenReturn(Optional.of(existente));
+        when(metodoPagamentoRepository.findByNomeMetodoIgnoreCase("PIX")).thenReturn(Optional.of(metodo));
         
         when(pagamentoRepository.save(any(Pagamento.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -197,7 +196,7 @@ class PagamentoServiceTest {
         
         Pagamento existente = pagamento(pagamentoId, ticketId, metodoPagamentoId, new BigDecimal("20.00"), PagamentoStatus.PAGO);
         
-        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(existente));
+        when(pagamentoRepository.findByTicketIdForUpdate(ticketId)).thenReturn(Optional.of(existente));
 
         PagamentoResponse response = service.pagar(ticketId, new PagarRequest("PIX"));
         
@@ -212,7 +211,7 @@ class PagamentoServiceTest {
     void deveDarErroDeNotFoundAoTentarPagarSemCalculo() {
         UUID ticketId = UUID.randomUUID();
         
-        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.empty());
+        when(pagamentoRepository.findByTicketIdForUpdate(ticketId)).thenReturn(Optional.empty());
 
         assertThrows(PagamentoNaoEncontradoException.class, () -> service.pagar(ticketId, new PagarRequest("PIX")));
         verify(pagamentoRepository, never()).save(any());
@@ -226,8 +225,8 @@ class PagamentoServiceTest {
         
         Pagamento existente = pagamento(pagamentoId, ticketId, null, new BigDecimal("20.00"), PagamentoStatus.CALCULADO);
         
-        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(existente));
-        when(metodoPagamentoRepository.findByNomeMetodo("PIX")).thenReturn(Optional.empty());
+        when(pagamentoRepository.findByTicketIdForUpdate(ticketId)).thenReturn(Optional.of(existente));
+        when(metodoPagamentoRepository.findByNomeMetodoIgnoreCase("PIX")).thenReturn(Optional.empty());
 
         assertThrows(IllegalArgumentException.class, () -> service.pagar(ticketId, new PagarRequest("PIX")));
         verify(pagamentoRepository, never()).save(any());
@@ -269,21 +268,18 @@ class PagamentoServiceTest {
     @Test
     void deveBuscarHistoricoDoTicket() {
         UUID ticketId = UUID.randomUUID();
+        UUID pagamentoId = UUID.randomUUID();
         UUID metodoPagamentoId = UUID.randomUUID();
 
-        UUID primeiroId = UUID.randomUUID();
-        UUID segundoId = UUID.randomUUID();
+        Pagamento pagamento = pagamento(pagamentoId, ticketId, metodoPagamentoId, new BigDecimal("20.00"), PagamentoStatus.PAGO);
 
-        Pagamento primeiro = pagamento(primeiroId, ticketId, metodoPagamentoId, new BigDecimal("20.00"), PagamentoStatus.CALCULADO);
-        Pagamento segundo = pagamento(segundoId, ticketId, metodoPagamentoId, new BigDecimal("30.00"), PagamentoStatus.PAGO);
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(pagamento));
 
-        when(pagamentoRepository.findAllByTicketIdOrderByDataDesc(ticketId)).thenReturn(List.of(primeiro, segundo));
+        PagamentoResponse resultado = service.buscarPorTicket(ticketId);
 
-        List<PagamentoResponse> resultado = service.buscarPorTicket(ticketId);
-
-        assertEquals(2, resultado.size());
-        assertEquals(primeiroId, resultado.get(0).id());
-        assertEquals(segundoId, resultado.get(1).id());
+        assertEquals(pagamentoId, resultado.id());
+        assertEquals(ticketId, resultado.ticketId());
+        assertEquals(PagamentoStatus.PAGO, resultado.status());
     }
 
     private MetodoPagamento metodo(UUID id, String nome) {

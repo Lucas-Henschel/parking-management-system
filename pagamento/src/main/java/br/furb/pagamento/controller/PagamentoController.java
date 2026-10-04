@@ -9,7 +9,6 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -35,9 +34,9 @@ public class PagamentoController {
         return ResponseEntity.ok(pagamentoService.buscarPorId(id));
     }
 
-    @Operation(summary = "Buscar histórico por ticket", description = "Retorna todos os pagamentos (e tentativas) de um ticket.")
+    @Operation(summary = "Buscar pagamento por ticket", description = "Retorna o pagamento de um ticket específico.")
     @GetMapping("/ticket/{ticketId}")
-    public ResponseEntity<List<PagamentoResponse>> buscarPorTicket(@PathVariable UUID ticketId) {
+    public ResponseEntity<PagamentoResponse> buscarPorTicket(@PathVariable UUID ticketId) {
         return ResponseEntity.ok(pagamentoService.buscarPorTicket(ticketId));
     }
 }

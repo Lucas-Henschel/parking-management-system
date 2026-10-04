@@ -7,7 +7,7 @@ import br.furb.pagamento.entity.MensagemProcessada;
 import br.furb.pagamento.repository.MensagemProcessadaRepository;
 import br.furb.pagamento.service.PagamentoService;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
@@ -26,12 +26,15 @@ public class PagamentoListener {
     @RabbitListener(queues = RabbitMQConfig.PAGAMENTO_QUEUE)
     @Transactional
     public void receberCalculo(MensagemEnvelope<CalcularPagamentoRequest> envelope) {
-        if (mensagemProcessadaRepository.existsById(envelope.messageId())) {
-            return; 
+        try {
+            // Inserir primeiro para garantir idempotência atômica
+            mensagemProcessadaRepository.save(new MensagemProcessada(envelope.messageId(), LocalDateTime.now()));
+            
+            // Se chegou aqui, a mensagem não foi processada antes
+            pagamentoService.calcularPagamento(envelope.payload());
+        } catch (DataIntegrityViolationException e) {
+            // Mensagem já foi processada - ignorar silenciosamente
+            return;
         }
-
-        pagamentoService.calcularPagamento(envelope.payload());
-        
-        mensagemProcessadaRepository.save(new MensagemProcessada(envelope.messageId(), LocalDateTime.now()));
     }
 }
