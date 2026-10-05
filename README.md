@@ -45,7 +45,11 @@ cd pagamento && ./mvnw spring-boot:run
 Verificações:
 
 - Health: http://localhost:8081/actuator/health (8082 e 8083 para os demais)
-- Swagger UI: http://localhost:8081/swagger-ui.html
+- Swagger UI (documentação da API, troque a porta para cada serviço):
+  - estacionamento: http://localhost:8081/swagger-ui.html
+  - vagas: http://localhost:8082/swagger-ui.html
+  - pagamento: http://localhost:8083/swagger-ui.html
+- Especificação OpenAPI em JSON: `/v3/api-docs` (ex.: http://localhost:8083/v3/api-docs)
 - RabbitMQ: http://localhost:15672 (usuário e senha `parking`)
 
 Para parar a infraestrutura (mantendo os dados) ou apagar tudo:
