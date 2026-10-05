@@ -5,20 +5,18 @@ import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
-import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
-import org.springframework.amqp.rabbit.connection.ConnectionFactory;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
+import org.springframework.amqp.support.converter.MessageConversionException;
 import org.springframework.amqp.support.converter.MessageConverter;
-import org.springframework.boot.autoconfigure.amqp.SimpleRabbitListenerContainerFactoryConfigurer;
+import org.springframework.boot.amqp.autoconfigure.RabbitListenerRetrySettingsCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.json.JsonMapper;
 
 @Configuration
 public class RabbitMQConfig {
-
     public static final String EXCHANGE = "parking.exchange";
+
     public static final String PAGAMENTO_QUEUE = "pagamento.calcular.queue";
     public static final String PAGAMENTO_DLQ = "pagamento.calcular.queue.dlq";
 
@@ -35,9 +33,9 @@ public class RabbitMQConfig {
     @Bean
     public Queue pagamentoQueue() {
         return QueueBuilder.durable(PAGAMENTO_QUEUE)
-                .deadLetterExchange(EXCHANGE)
-                .deadLetterRoutingKey(PAGAMENTO_DLQ_ROUTING_KEY)
-                .build();
+            .deadLetterExchange(EXCHANGE)
+            .deadLetterRoutingKey(PAGAMENTO_DLQ_ROUTING_KEY)
+            .build();
     }
 
     @Bean
@@ -48,33 +46,36 @@ public class RabbitMQConfig {
     @Bean
     public Binding pagamentoBinding(Queue pagamentoQueue, TopicExchange parkingExchange) {
         return BindingBuilder.bind(pagamentoQueue)
-                .to(parkingExchange)
-                .with(CALCULAR_PAGAMENTO_ROUTING_KEY);
+            .to(parkingExchange)
+            .with(CALCULAR_PAGAMENTO_ROUTING_KEY);
     }
 
     @Bean
     public Binding pagamentoDlqBinding(Queue pagamentoDlq, TopicExchange parkingExchange) {
         return BindingBuilder.bind(pagamentoDlq)
-                .to(parkingExchange)
-                .with(PAGAMENTO_DLQ_ROUTING_KEY);
+            .to(parkingExchange)
+            .with(PAGAMENTO_DLQ_ROUTING_KEY);
     }
 
     @Bean
     public MessageConverter messageConverter() {
-        JsonMapper jsonMapper = JsonMapper.builder()
-                .addModule(new JavaTimeModule())
-                .build();
-        return new Jackson2JsonMessageConverter(jsonMapper);
+        return new JacksonJsonMessageConverter(JsonMapper.builder().build());
     }
 
+    /**
+     * Erros permanentes (dados inválidos, mensagem malformada) não são retentados e vão
+     * direto para a DLQ. Os demais seguem a política de retry de application.properties.
+     */
     @Bean
-    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
-            ConnectionFactory connectionFactory,
-            SimpleRabbitListenerContainerFactoryConfigurer configurer) {
-        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
-        configurer.configure(factory, connectionFactory);
-        factory.setErrorHandler(new RabbitMQErrorHandler());
-        return factory;
+    public RabbitListenerRetrySettingsCustomizer retrySettingsCustomizer() {
+        return settings -> settings.setExceptionPredicate(throwable -> {
+            for (Throwable t = throwable; t != null; t = t.getCause() == t ? null : t.getCause()) {
+                if (t instanceof IllegalArgumentException || t instanceof MessageConversionException) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
     }
 }
-
