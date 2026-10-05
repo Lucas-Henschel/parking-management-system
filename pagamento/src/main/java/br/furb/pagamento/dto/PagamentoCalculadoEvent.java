@@ -1,14 +1,15 @@
 package br.furb.pagamento.dto;
 
-import br.furb.pagamento.entity.PagamentoStatus;
+import br.furb.pagamento.enums.PagamentoStatus;
+
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 
 public record PagamentoCalculadoEvent(
-        UUID pagamentoId,
-        UUID ticketId,
-        BigDecimal valor,
-        LocalDateTime data,
-        PagamentoStatus status
+    UUID pagamentoId,
+    UUID ticketId,
+    BigDecimal valor,
+    Instant data,
+    PagamentoStatus status
 ) {}

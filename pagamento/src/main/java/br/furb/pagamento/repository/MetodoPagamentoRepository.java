@@ -9,7 +9,6 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface MetodoPagamentoRepository extends JpaRepository<MetodoPagamento, UUID> {
-    
     @Query("SELECT m FROM MetodoPagamento m WHERE UPPER(m.nomeMetodo) = UPPER(:nomeMetodo)")
     Optional<MetodoPagamento> findByNomeMetodoIgnoreCase(@Param("nomeMetodo") String nomeMetodo);
 }

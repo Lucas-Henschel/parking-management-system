@@ -3,11 +3,17 @@ package br.furb.pagamento.service;
 import br.furb.pagamento.dto.*;
 import br.furb.pagamento.entity.MetodoPagamento;
 import br.furb.pagamento.entity.Pagamento;
-import br.furb.pagamento.entity.PagamentoStatus;
+import br.furb.pagamento.enums.PagamentoStatus;
+import br.furb.pagamento.exception.MetodoPagamentoInvalidoException;
 import br.furb.pagamento.exception.PagamentoNaoEncontradoException;
+import br.furb.pagamento.exception.PeriodoInvalidoException;
 import br.furb.pagamento.messaging.PagamentoPublisher;
 import br.furb.pagamento.repository.MetodoPagamentoRepository;
 import br.furb.pagamento.repository.PagamentoRepository;
+import br.furb.pagamento.repository.MensagemProcessadaRepository;
+import org.junit.jupiter.api.AfterEach;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,7 +22,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -36,72 +43,80 @@ class PagamentoServiceTest {
     @Mock
     private PagamentoPublisher pagamentoPublisher;
 
+    @Mock
+    private MensagemProcessadaRepository mensagemProcessadaRepository;
+
     private PagamentoService service;
 
     @BeforeEach
     void setUp() {
+        TransactionSynchronizationManager.initSynchronization();
         service = new PagamentoService(
                 pagamentoRepository,
                 metodoPagamentoRepository,
+                mensagemProcessadaRepository,
                 pagamentoPublisher,
                 new BigDecimal("10.00")
         );
     }
 
+    @AfterEach
+    void tearDown() {
+        TransactionSynchronizationManager.clear();
+    }
+
+    /** Simula o commit da transação: dispara os callbacks afterCommit registrados. */
+    private void commit() {
+        TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+    }
+
+    private void cenarioCalculo(UUID ticketId, BigDecimal valor) {
+        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(
+                Optional.of(pagamento(UUID.randomUUID(), ticketId, null, valor, PagamentoStatus.CALCULADO)));
+    }
+
+    private BigDecimal valorGravado(UUID ticketId) {
+        ArgumentCaptor<BigDecimal> captor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(pagamentoRepository).inserirCalculadoSeAusente(any(), eq(ticketId), captor.capture(), any());
+        return captor.getValue();
+    }
+
     @Test
     void deveCalcularPagamentoDeUmaHora() {
         UUID ticketId = UUID.randomUUID();
-        UUID pagamentoId = UUID.randomUUID();
+        Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
+        cenarioCalculo(ticketId, new BigDecimal("10.00"));
 
-        LocalDateTime entrada = LocalDateTime.of(2026, 10, 3, 10, 0);
-        LocalDateTime saida = entrada.plusMinutes(30);
+        PagamentoCalculadoEvent resultado = service.calcularPagamento(
+                new CalcularPagamentoRequest(ticketId, entrada, entrada.plus(30, ChronoUnit.MINUTES)));
 
-        CalcularPagamentoRequest request = new CalcularPagamentoRequest(ticketId, entrada, saida);
-
-        Pagamento salvo = pagamento(pagamentoId, ticketId, null, new BigDecimal("10.00"), PagamentoStatus.CALCULADO);
-
-        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.empty());
-        when(pagamentoRepository.save(any(Pagamento.class))).thenReturn(salvo);
-
-        PagamentoCalculadoEvent resultado = service.calcularPagamento(request);
-
-        assertEquals(pagamentoId, resultado.pagamentoId());
+        assertEquals(new BigDecimal("10.00"), valorGravado(ticketId));
         assertEquals(ticketId, resultado.ticketId());
-        assertEquals(new BigDecimal("10.00"), resultado.valor());
         assertEquals(PagamentoStatus.CALCULADO, resultado.status());
 
-        verify(pagamentoRepository).save(any(Pagamento.class));
+        verify(pagamentoPublisher, never()).publicarPagamentoCalculado(any());
+        commit();
         verify(pagamentoPublisher).publicarPagamentoCalculado(resultado);
     }
 
     @Test
     void deveCobrarDuasHorasQuandoUltrapassarUmaHora() {
         UUID ticketId = UUID.randomUUID();
-        UUID pagamentoId = UUID.randomUUID();
+        Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
+        cenarioCalculo(ticketId, new BigDecimal("20.00"));
 
-        LocalDateTime entrada = LocalDateTime.of(2026, 10, 3, 10, 0);
-        LocalDateTime saida = entrada.plusMinutes(61);
+        service.calcularPagamento(new CalcularPagamentoRequest(ticketId, entrada, entrada.plus(61, ChronoUnit.MINUTES)));
 
-        CalcularPagamentoRequest request = new CalcularPagamentoRequest(ticketId, entrada, saida);
-
-        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.empty());
-        when(pagamentoRepository.save(any(Pagamento.class)))
-                .thenReturn(pagamento(pagamentoId, ticketId, null, new BigDecimal("20.00"), PagamentoStatus.CALCULADO));
-
-        PagamentoCalculadoEvent resultado = service.calcularPagamento(request);
-
-        assertEquals(new BigDecimal("20.00"), resultado.valor());
+        assertEquals(new BigDecimal("20.00"), valorGravado(ticketId));
     }
 
     @Test
     void deveRejeitarSaidaAnteriorOuIgualAEntrada() {
-        UUID ticketId = UUID.randomUUID();
+        Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
+        CalcularPagamentoRequest request = new CalcularPagamentoRequest(UUID.randomUUID(), entrada, entrada);
 
-        LocalDateTime entrada = LocalDateTime.of(2026, 10, 3, 10, 0);
-        CalcularPagamentoRequest request = new CalcularPagamentoRequest(ticketId, entrada, entrada);
-
-        IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
+        PeriodoInvalidoException exception = assertThrows(
+                PeriodoInvalidoException.class,
                 () -> service.calcularPagamento(request)
         );
 
@@ -110,60 +125,29 @@ class PagamentoServiceTest {
     }
 
     @Test
-    void deveReutilizarPagamentoQuandoTicketJaFoiProcessado() {
+    void deveIgnorarMensagemDuplicadaSemCalcular() {
+        UUID messageId = UUID.randomUUID();
         UUID ticketId = UUID.randomUUID();
-        UUID pagamentoId = UUID.randomUUID();
+        when(mensagemProcessadaRepository.registrarSeAusente(eq(messageId), any())).thenReturn(0);
 
-        Pagamento existente = pagamento(pagamentoId, ticketId, null, new BigDecimal("20.00"), PagamentoStatus.CALCULADO);
+        service.processarCalculo(new MensagemEnvelope<>(messageId, ticketId, "CALCULAR_PAGAMENTO", Instant.now(),
+                new CalcularPagamentoRequest(ticketId, Instant.now().minus(1, ChronoUnit.HOURS), Instant.now())));
 
-        CalcularPagamentoRequest request = new CalcularPagamentoRequest(
-                ticketId,
-                LocalDateTime.of(2026, 10, 3, 10, 0),
-                LocalDateTime.of(2026, 10, 3, 11, 30)
-        );
-
-        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.of(existente));
-
-        PagamentoCalculadoEvent resultado = service.calcularPagamento(request);
-
-        assertEquals(pagamentoId, resultado.pagamentoId());
-        assertEquals(ticketId, resultado.ticketId());
-        assertEquals(new BigDecimal("20.00"), resultado.valor());
-
-        verify(pagamentoRepository, never()).save(any());
-        verify(pagamentoPublisher).publicarPagamentoCalculado(resultado);
+        verifyNoInteractions(pagamentoRepository, pagamentoPublisher);
     }
 
     @Test
-    void deveSalvarDadosCorretosNoPagamento() {
+    void deveCalcularQuandoMensagemForNova() {
+        UUID messageId = UUID.randomUUID();
         UUID ticketId = UUID.randomUUID();
+        Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
+        when(mensagemProcessadaRepository.registrarSeAusente(eq(messageId), any())).thenReturn(1);
+        cenarioCalculo(ticketId, new BigDecimal("10.00"));
 
-        LocalDateTime entrada = LocalDateTime.of(2026, 10, 3, 10, 0);
-        LocalDateTime saida = entrada.plusHours(2);
+        service.processarCalculo(new MensagemEnvelope<>(messageId, ticketId, "CALCULAR_PAGAMENTO", Instant.now(),
+                new CalcularPagamentoRequest(ticketId, entrada, entrada.plus(10, ChronoUnit.MINUTES))));
 
-        CalcularPagamentoRequest request = new CalcularPagamentoRequest(ticketId, entrada, saida);
-
-        when(pagamentoRepository.findByTicketId(ticketId)).thenReturn(Optional.empty());
-
-        when(pagamentoRepository.save(any(Pagamento.class))).thenAnswer(invocation -> {
-            Pagamento pagamento = invocation.getArgument(0);
-            pagamento.setId(UUID.randomUUID());
-            pagamento.setData(LocalDateTime.now());
-            return pagamento;
-        });
-
-        service.calcularPagamento(request);
-
-        ArgumentCaptor<Pagamento> captor = ArgumentCaptor.forClass(Pagamento.class);
-        verify(pagamentoRepository).save(captor.capture());
-
-        Pagamento salvo = captor.getValue();
-        assertEquals(ticketId, salvo.getTicketId());
-        assertNull(salvo.getMetodoPagamentoId());
-        assertEquals(new BigDecimal("20.00"), salvo.getValor());
-        assertEquals(PagamentoStatus.CALCULADO, salvo.getStatus());
-        assertNotNull(salvo.getData());
-        assertNotNull(salvo.getId());
+        verify(pagamentoRepository).inserirCalculadoSeAusente(any(), eq(ticketId), any(), any());
     }
 
     @Test
@@ -184,7 +168,9 @@ class PagamentoServiceTest {
         
         assertEquals(PagamentoStatus.PAGO, response.status());
         assertEquals(metodoPagamentoId, response.metodoPagamentoId());
-        
+
+        verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
+        commit();
         verify(pagamentoPublisher).publicarPagamentoConfirmado(any());
     }
     
@@ -228,7 +214,7 @@ class PagamentoServiceTest {
         when(pagamentoRepository.findByTicketIdForUpdate(ticketId)).thenReturn(Optional.of(existente));
         when(metodoPagamentoRepository.findByNomeMetodoIgnoreCase("PIX")).thenReturn(Optional.empty());
 
-        assertThrows(IllegalArgumentException.class, () -> service.pagar(ticketId, new PagarRequest("PIX")));
+        assertThrows(MetodoPagamentoInvalidoException.class, () -> service.pagar(ticketId, new PagarRequest("PIX")));
         verify(pagamentoRepository, never()).save(any());
         verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
     }
@@ -295,7 +281,7 @@ class PagamentoServiceTest {
         pagamento.setTicketId(ticketId);
         pagamento.setMetodoPagamentoId(metodoPagamentoId);
         pagamento.setValor(valor);
-        pagamento.setData(LocalDateTime.of(2026, 10, 3, 12, 0));
+        pagamento.setData(Instant.parse("2026-10-03T12:00:00Z"));
         pagamento.setStatus(status);
         return pagamento;
     }

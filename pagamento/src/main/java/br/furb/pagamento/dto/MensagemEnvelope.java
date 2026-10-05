@@ -1,12 +1,12 @@
 package br.furb.pagamento.dto;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 
 public record MensagemEnvelope<T>(
-        UUID messageId,
-        UUID correlationId,
-        String tipo,
-        LocalDateTime timestamp,
-        T payload
+    UUID messageId,
+    UUID correlationId,
+    String tipo,
+    Instant timestamp,
+    T payload
 ) {}

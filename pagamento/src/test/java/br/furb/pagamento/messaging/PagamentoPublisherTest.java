@@ -4,7 +4,7 @@ import br.furb.pagamento.config.RabbitMQConfig;
 import br.furb.pagamento.dto.MensagemEnvelope;
 import br.furb.pagamento.dto.PagamentoCalculadoEvent;
 import br.furb.pagamento.dto.PagamentoConfirmadoEvent;
-import br.furb.pagamento.entity.PagamentoStatus;
+import br.furb.pagamento.enums.PagamentoStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,7 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,7 +42,7 @@ class PagamentoPublisherTest {
                 UUID.randomUUID(),
                 ticketId,
                 new BigDecimal("20.00"),
-                LocalDateTime.of(2026, 10, 3, 12, 0),
+                Instant.parse("2026-10-03T12:00:00Z"),
                 PagamentoStatus.CALCULADO
         );
 
