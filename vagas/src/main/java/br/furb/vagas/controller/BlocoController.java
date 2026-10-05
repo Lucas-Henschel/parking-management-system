@@ -1,35 +1,41 @@
 package br.furb.vagas.controller;
 
-import br.furb.vagas.dto.*;
-import br.furb.vagas.service.CadastroService;
+import br.furb.vagas.dto.BlocoRequest;
+import br.furb.vagas.dto.BlocoResponse;
+import br.furb.vagas.service.BlocoService;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+
 import java.net.URI;
 import java.util.UUID;
-import org.springframework.data.domain.*;
+
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/blocos")
+@Tag(name = "Blocos", description = "Operações relacionadas aos blocos de cada setor")
 public class BlocoController {
-    private final CadastroService cadastro;
-    public BlocoController(CadastroService cadastro) { this.cadastro = cadastro; }
+    private final BlocoService blocoService;
+
+    public BlocoController(BlocoService blocoService) { this.blocoService = blocoService; }
+
+    @Operation(summary = "Listar blocos", description = "Retorna os blocos cadastrados, de forma paginada.")
     @GetMapping
-    public Page<BlocoResponse> listar(Pageable paginacao) { return cadastro.listarBlocos(paginacao); }
+    public Page<BlocoResponse> listar(Pageable paginacao) { return blocoService.listar(paginacao); }
+
+    @Operation(summary = "Buscar bloco por ID", description = "Retorna os detalhes de um bloco específico.")
     @GetMapping("/{id}")
-    public BlocoResponse consultar(@PathVariable UUID id) { return cadastro.consultarBloco(id); }
+    public BlocoResponse consultar(@PathVariable UUID id) { return blocoService.consultar(id); }
+
+    @Operation(summary = "Cadastrar bloco", description = "Cadastra um novo bloco em um setor existente.")
     @PostMapping
     public ResponseEntity<BlocoResponse> cadastrar(@Valid @RequestBody BlocoRequest dados) {
-        BlocoResponse resposta = cadastro.cadastrarBloco(dados);
+        BlocoResponse resposta = blocoService.cadastrar(dados);
         return ResponseEntity.created(URI.create("/blocos/" + resposta.id())).body(resposta);
     }
-    @PutMapping("/{id}")
-    public BlocoResponse atualizar(@PathVariable UUID id, @Valid @RequestBody BlocoRequest dados) {
-        return cadastro.atualizarBloco(id, dados);
-    }
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> excluir(@PathVariable UUID id) {
-        cadastro.excluirBloco(id); return ResponseEntity.noContent().build();
-    }
-
 }

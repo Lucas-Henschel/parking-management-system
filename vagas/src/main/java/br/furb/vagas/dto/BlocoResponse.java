@@ -1,7 +1,7 @@
 package br.furb.vagas.dto;
 
 import br.furb.vagas.entity.Bloco;
-import br.furb.vagas.entity.CadastroStatus;
+import br.furb.vagas.enums.CadastroStatus;
 import java.util.UUID;
 
 public record BlocoResponse(UUID id, UUID setorId, String codigo, CadastroStatus status) {

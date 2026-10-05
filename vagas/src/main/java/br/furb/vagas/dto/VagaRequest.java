@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
 public record VagaRequest(
-        @NotBlank @Size(max = 30) String numero,
-        @NotNull UUID blocoId,
-        @NotNull UUID tipoId) {}
+    @NotBlank @Size(max = 30) String numero,
+    @NotNull UUID blocoId,
+    @NotNull UUID tipoId
+) {}

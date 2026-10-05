@@ -1,6 +1,8 @@
 package br.furb.vagas.service;
 
-import br.furb.vagas.repository.OutboxRepository;
+import br.furb.vagas.enums.MotivoIndisponibilidade;
+import br.furb.vagas.repository.EventoPendenteRepository;
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -13,7 +15,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 class RegistroResultadoReservaServiceTest {
-    private final OutboxRepository eventos = mock(OutboxRepository.class);
+    private final EventoPendenteRepository eventos = mock(EventoPendenteRepository.class);
     private final JsonMapper conversor = JsonMapper.builder().findAndAddModules().build();
     private final RegistroResultadoReservaService resultados =
             new RegistroResultadoReservaService(eventos, conversor);
@@ -26,7 +28,7 @@ class RegistroResultadoReservaServiceTest {
         resultados.registrarReserva(idTicket, idVaga, "A-12");
 
         var envelopeCapturado = ArgumentCaptor.forClass(String.class);
-        verify(eventos).registrar(any(UUID.class), eq("vaga.reservada"), envelopeCapturado.capture());
+        verify(eventos).registrar(any(UUID.class), eq("vaga.reservada"), envelopeCapturado.capture(), any(Instant.class));
         var envelope = conversor.readTree(envelopeCapturado.getValue());
 
         assertThat(envelope.get("messageId").asString()).isNotBlank();
@@ -44,10 +46,10 @@ class RegistroResultadoReservaServiceTest {
     void devePreservarContratoDaIndisponibilidade() {
         UUID idTicket = UUID.randomUUID();
 
-        resultados.registrarIndisponibilidade(idTicket, "SEM_VAGAS");
+        resultados.registrarIndisponibilidade(idTicket, MotivoIndisponibilidade.SEM_VAGAS);
 
         var envelopeCapturado = ArgumentCaptor.forClass(String.class);
-        verify(eventos).registrar(any(UUID.class), eq("vaga.indisponivel"), envelopeCapturado.capture());
+        verify(eventos).registrar(any(UUID.class), eq("vaga.indisponivel"), envelopeCapturado.capture(), any(Instant.class));
         var envelope = conversor.readTree(envelopeCapturado.getValue());
 
         assertThat(envelope.get("correlationId").asString()).isEqualTo(idTicket.toString());

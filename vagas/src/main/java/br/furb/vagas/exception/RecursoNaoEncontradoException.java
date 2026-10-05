@@ -1,5 +1,9 @@
 package br.furb.vagas.exception;
 
+import br.furb.vagas.enums.Recurso;
+
 public class RecursoNaoEncontradoException extends RuntimeException {
-    public RecursoNaoEncontradoException(String recurso) { super(recurso + " não encontrado."); }
+    public RecursoNaoEncontradoException(Recurso recurso) {
+        super(recurso.descricao() + " não encontrado.");
+    }
 }

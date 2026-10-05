@@ -1,7 +1,7 @@
 package br.furb.vagas.dto;
 
 import br.furb.vagas.entity.Setor;
-import br.furb.vagas.entity.CadastroStatus;
+import br.furb.vagas.enums.CadastroStatus;
 import java.util.UUID;
 
 public record SetorResponse(UUID id, String codigo, CadastroStatus status) {
