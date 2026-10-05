@@ -1,108 +1,114 @@
 package br.furb.pagamento.exception;
 
-import org.springframework.amqp.support.converter.MessageConversionException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.net.URI;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * Estende ResponseEntityExceptionHandler para que as exceções do Spring MVC (JSON inválido,
+ * rota inexistente, método não permitido etc.) mantenham o status correto em formato ProblemDetail.
+ */
 @RestControllerAdvice
-public class GlobalExceptionHandler {
+public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(PagamentoNaoEncontradoException.class)
     public ProblemDetail tratarPagamentoNaoEncontrado(PagamentoNaoEncontradoException exception) {
-        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                HttpStatus.NOT_FOUND,
-                exception.getMessage()
-        );
-        problemDetail.setTitle("Pagamento não encontrado");
-        problemDetail.setType(URI.create("https://api.parking.com/errors/pagamento-nao-encontrado"));
-        return problemDetail;
+        return problema(HttpStatus.NOT_FOUND, "Pagamento não encontrado", "pagamento-nao-encontrado", exception.getMessage());
     }
 
     @ExceptionHandler(IllegalStateException.class)
     public ProblemDetail tratarEstadoInvalido(IllegalStateException exception) {
-        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT,
-                exception.getMessage()
+        return problema(HttpStatus.CONFLICT, "Conflito de estado", "estado-invalido", exception.getMessage());
+    }
+
+    @ExceptionHandler(PeriodoInvalidoException.class)
+    public ProblemDetail tratarPeriodoInvalido(PeriodoInvalidoException exception) {
+        return problema(HttpStatus.BAD_REQUEST, "Período inválido", "periodo-invalido", exception.getMessage());
+    }
+
+    @ExceptionHandler(MetodoPagamentoInvalidoException.class)
+    public ProblemDetail tratarMetodoInvalido(MetodoPagamentoInvalidoException exception) {
+        ProblemDetail problema = problema(
+            HttpStatus.BAD_REQUEST,
+            "Método de pagamento inválido",
+            "metodo-pagamento-invalido",
+            exception.getMessage()
         );
-        problemDetail.setTitle("Estado inválido");
-        problemDetail.setType(URI.create("https://api.parking.com/errors/estado-invalido"));
-        return problemDetail;
+        problema.setProperty("metodo", exception.getMetodo());
+
+        return problema;
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ProblemDetail tratarArgumentoInvalido(IllegalArgumentException exception) {
-        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                HttpStatus.BAD_REQUEST,
-                exception.getMessage()
-        );
-        problemDetail.setTitle("Argumento inválido");
-        problemDetail.setType(URI.create("https://api.parking.com/errors/argumento-invalido"));
-        return problemDetail;
-    }
-
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ProblemDetail tratarValidacao(MethodArgumentNotValidException exception) {
-        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                HttpStatus.BAD_REQUEST,
-                "Erro de validação nos dados fornecidos"
-        );
-        problemDetail.setTitle("Erro de validação");
-        problemDetail.setType(URI.create("https://api.parking.com/errors/validacao"));
-        
-        Map<String, String> errors = new HashMap<>();
-        exception.getBindingResult().getAllErrors().forEach(error -> {
-            String fieldName = ((FieldError) error).getField();
-            String errorMessage = error.getDefaultMessage();
-            errors.put(fieldName, errorMessage);
-        });
-        problemDetail.setProperty("errors", errors);
-        
-        return problemDetail;
+        return problema(HttpStatus.BAD_REQUEST, "Dados inválidos", "argumento-invalido", exception.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ProblemDetail tratarTipoInvalido(MethodArgumentTypeMismatchException exception) {
-        String message = String.format("O parâmetro '%s' deve ser do tipo %s", 
-                exception.getName(), 
-                exception.getRequiredType() != null ? exception.getRequiredType().getSimpleName() : "desconhecido");
-        
-        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                HttpStatus.BAD_REQUEST,
-                message
+        String tipo = exception.getRequiredType() != null ? exception.getRequiredType().getSimpleName() : "desconhecido";
+
+        return problema(
+            HttpStatus.BAD_REQUEST,
+            "Tipo de argumento inválido",
+            "tipo-invalido",
+            String.format("O parâmetro '%s' deve ser do tipo %s", exception.getName(), tipo)
         );
-        problemDetail.setTitle("Tipo de argumento inválido");
-        problemDetail.setType(URI.create("https://api.parking.com/errors/tipo-invalido"));
-        return problemDetail;
     }
 
-    @ExceptionHandler(MessageConversionException.class)
-    public ProblemDetail tratarConversaoMensagem(MessageConversionException exception) {
-        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                HttpStatus.BAD_REQUEST,
-                "Erro ao converter mensagem: " + exception.getMessage()
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(
+        MethodArgumentNotValidException exception,
+        HttpHeaders headers,
+        HttpStatusCode status,
+        WebRequest request
+    ) {
+        ProblemDetail problema = problema(
+            HttpStatus.BAD_REQUEST,
+            "Erro de validação",
+            "validacao",
+            "Erro de validação nos dados fornecidos"
         );
-        problemDetail.setTitle("Erro de conversão de mensagem");
-        problemDetail.setType(URI.create("https://api.parking.com/errors/conversao-mensagem"));
-        return problemDetail;
+
+        Map<String, String> erros = new LinkedHashMap<>();
+
+        exception.getBindingResult()
+            .getFieldErrors()
+            .forEach((FieldError erro) -> erros.put(erro.getField(), erro.getDefaultMessage()));
+
+        problema.setProperty("errors", erros);
+
+        return ResponseEntity.badRequest().body(problema);
     }
 
     @ExceptionHandler(Exception.class)
     public ProblemDetail tratarErroGenerico(Exception exception) {
-        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                "Erro interno do servidor"
-        );
-        problemDetail.setTitle("Erro interno");
-        problemDetail.setType(URI.create("https://api.parking.com/errors/erro-interno"));
-        return problemDetail;
+        log.error("Erro não tratado", exception);
+        return problema(HttpStatus.INTERNAL_SERVER_ERROR, "Erro interno", "erro-interno", "Erro interno do servidor");
+    }
+
+    private ProblemDetail problema(HttpStatus status, String titulo, String tipo, String detalhe) {
+        ProblemDetail problema = ProblemDetail.forStatusAndDetail(status, detalhe);
+
+        problema.setTitle(titulo);
+        problema.setType(URI.create("https://api.parking.com/errors/" + tipo));
+
+        return problema;
     }
 }
