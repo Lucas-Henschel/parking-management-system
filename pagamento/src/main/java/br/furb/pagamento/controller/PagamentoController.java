@@ -15,7 +15,6 @@ import java.util.UUID;
 @RequestMapping("/pagamentos")
 @Tag(name = "Pagamentos", description = "Operações relacionadas a pagamentos")
 public class PagamentoController {
-
     private final PagamentoService pagamentoService;
 
     public PagamentoController(PagamentoService pagamentoService) {

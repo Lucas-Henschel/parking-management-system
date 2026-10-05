@@ -7,7 +7,6 @@ import java.util.UUID;
 @Entity
 @Table(name = "metodo_pagamento")
 public class MetodoPagamento {
-
     @Id
     private UUID id;
 
