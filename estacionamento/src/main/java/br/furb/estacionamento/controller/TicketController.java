@@ -37,7 +37,14 @@ public class TicketController {
                 .path("/tickets/{ticketId}")
                 .buildAndExpand(ticket.id())
                 .toUri();
-        return ResponseEntity.created(location).body(ticket);
+        return ResponseEntity.accepted().location(location).body(ticket);
+    }
+
+    @PostMapping("/tickets/{ticketId}/saida")
+    @Operation(summary = "Registrar saída e solicitar cálculo do pagamento",
+            description = "Aceita a saída com 202. Consulte o ticket para acompanhar cálculo e pagamento. Repetições não geram novo cálculo.")
+    public ResponseEntity<TicketResponse> registrarSaida(@PathVariable UUID ticketId) {
+        return ResponseEntity.accepted().body(ticketService.registrarSaida(ticketId));
     }
 
     @GetMapping("/tickets/{ticketId}")

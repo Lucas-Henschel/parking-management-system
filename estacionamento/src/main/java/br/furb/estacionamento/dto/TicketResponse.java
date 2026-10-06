@@ -15,7 +15,8 @@ public record TicketResponse(
         Instant entrada,
         Instant saida,
         TicketStatus status,
-        BigDecimal valor
+        BigDecimal valor,
+        int tentativasReserva
 ) {
     public static TicketResponse from(Ticket ticket) {
         return new TicketResponse(
@@ -26,7 +27,8 @@ public record TicketResponse(
                 ticket.getEntrada(),
                 ticket.getSaida(),
                 ticket.getStatus(),
-                ticket.getValor()
+                ticket.getValor(),
+                ticket.getTentativasReserva()
         );
     }
 }

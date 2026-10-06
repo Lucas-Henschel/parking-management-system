@@ -44,6 +44,28 @@ public class Ticket {
     @Column(precision = 10, scale = 2)
     private BigDecimal valor;
 
+    @Column(name = "pagamento_id")
+    private UUID pagamentoId;
+
+    @Column(name = "valor_confirmado", precision = 10, scale = 2)
+    private BigDecimal valorConfirmado;
+
+    @Column(name = "tentativas_reserva", nullable = false)
+    private int tentativasReserva = 1;
+
+    public int getTentativasReserva() {
+        return tentativasReserva;
+    }
+
+    public void registrarNovaTentativaReserva() {
+        tentativasReserva++;
+    }
+
+    public UUID getPagamentoId() { return pagamentoId; }
+    public void setPagamentoId(UUID pagamentoId) { this.pagamentoId = pagamentoId; }
+    public BigDecimal getValorConfirmado() { return valorConfirmado; }
+    public void setValorConfirmado(BigDecimal valorConfirmado) { this.valorConfirmado = valorConfirmado; }
+
     protected Ticket() {
     }
 
