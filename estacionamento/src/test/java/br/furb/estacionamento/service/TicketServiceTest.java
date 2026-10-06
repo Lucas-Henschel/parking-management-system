@@ -4,7 +4,6 @@ import br.furb.estacionamento.dto.TicketResponse;
 import br.furb.estacionamento.entity.Ticket;
 import br.furb.estacionamento.entity.Veiculo;
 import br.furb.estacionamento.enums.TicketStatus;
-import br.furb.estacionamento.messaging.TicketPublisher;
 import br.furb.estacionamento.repository.TicketRepository;
 import br.furb.estacionamento.repository.VeiculoRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,9 +13,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.server.ResponseStatusException;
+import br.furb.estacionamento.exception.ConflitoNegocioException;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,13 +38,16 @@ class TicketServiceTest {
     private VeiculoRepository veiculoRepository;
 
     @Mock
-    private TicketPublisher ticketPublisher;
+    private TicketLocalizador localizador;
+
+    @Mock
+    private RegistroEventoService registroEvento;
 
     private TicketService ticketService;
 
     @BeforeEach
     void setUp() {
-        ticketService = new TicketService(ticketRepository, veiculoRepository, ticketPublisher);
+        ticketService = new TicketService(ticketRepository, veiculoRepository, localizador, registroEvento);
     }
 
     @Test
@@ -65,7 +66,7 @@ class TicketServiceTest {
         assertEquals(TicketStatus.PENDENTE, ticketCaptor.getValue().getStatus());
         assertEquals(veiculo, ticketCaptor.getValue().getVeiculo());
         assertEquals("ABC1234", response.placa());
-        verify(ticketPublisher).publicarReserva(ticketCaptor.getValue().getId());
+        verify(registroEvento).registrarReserva(ticketCaptor.getValue().getId());
     }
 
     @Test
@@ -87,51 +88,28 @@ class TicketServiceTest {
         when(veiculoRepository.findByPlaca("ABC1234")).thenReturn(Optional.of(veiculo));
         when(ticketRepository.existsByVeiculo_IdAndStatusIn(nullable(UUID.class), anyList())).thenReturn(true);
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
+        ConflitoNegocioException exception = assertThrows(
+                ConflitoNegocioException.class,
                 () -> ticketService.registrarEntrada("ABC1234")
         );
 
-        assertEquals(409, exception.getStatusCode().value());
+        assertEquals("O veículo já possui um ticket em aberto.", exception.getMessage());
         verify(ticketRepository, never()).save(any(Ticket.class));
     }
 
     @Test
-    void deveAtivarTicketQuandoVagaForConfirmada() {
-        Veiculo veiculo = new Veiculo("ABC1234");
-        Ticket ticket = new Ticket(veiculo, Instant.now());
-        UUID ticketId = UUID.randomUUID();
-        UUID vagaId = UUID.randomUUID();
-        when(ticketRepository.findByIdForUpdate(ticketId)).thenReturn(Optional.of(ticket));
-        when(ticketRepository.save(any(Ticket.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        TicketResponse response = ticketService.registrarVagaConfirmada(ticketId, vagaId);
-
-        assertEquals(TicketStatus.ATIVO, response.status());
-        assertEquals(vagaId, response.vagaId());
-    }
-
-    @Test
-    void devePercorrerSaidaPagamentoEFinalizacao() {
+    void deveRegistrarSaidaEPedirCalculoDePagamento() {
         Veiculo veiculo = new Veiculo("ABC1234");
         Ticket ticket = new Ticket(veiculo, Instant.now().minusSeconds(3600));
-        ticket.setStatus(TicketStatus.ATIVO);
-        ticket.setVagaId(UUID.randomUUID());
+        ticket.confirmarVaga(UUID.randomUUID());
         UUID ticketId = UUID.randomUUID();
         ReflectionTestUtils.setField(ticket, "id", ticketId);
-        when(ticketRepository.findByIdForUpdate(ticketId)).thenReturn(Optional.of(ticket));
+        when(localizador.buscarParaAlteracao(ticketId)).thenReturn(ticket);
         when(ticketRepository.save(any(Ticket.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         TicketResponse saida = ticketService.registrarSaida(ticketId);
-        UUID pagamentoId = UUID.randomUUID();
-        TicketResponse calculado = ticketService.registrarPagamentoCalculado(ticketId, pagamentoId, new BigDecimal("20.00"));
-        TicketResponse finalizado = ticketService.confirmarPagamento(ticketId, pagamentoId, new BigDecimal("20.00"));
 
         assertEquals(TicketStatus.ATIVO, saida.status());
-        assertEquals(TicketStatus.AGUARDANDO_PAGAMENTO, calculado.status());
-        assertEquals(new BigDecimal("20.00"), calculado.valor());
-        assertEquals(TicketStatus.FINALIZADO, finalizado.status());
-        verify(ticketPublisher).publicarCalculoPagamento(any());
-        verify(ticketPublisher).publicarLiberacao(ticketId, ticket.getVagaId());
+        verify(registroEvento).registrarCalculoPagamento(any());
     }
 }

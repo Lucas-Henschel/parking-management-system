@@ -12,18 +12,28 @@ import java.util.UUID;
 
 public interface EventoPendenteRepository extends JpaRepository<EventoPendente, UUID> {
     @Modifying
-    @Query(value = """
-                INSERT INTO evento_pendente (id, rota, envelope, criado_em, proxima_tentativa)
-                VALUES (:id, :rota, :envelope, :criadoEm, :criadoEm)
-                """, nativeQuery = true)
-    int registrar(@Param("id") UUID id, @Param("rota") String rota,
-            @Param("envelope") String envelope, @Param("criadoEm") Instant criadoEm);
+    @Query(
+        value = """
+            INSERT INTO evento_pendente (id, rota, envelope, criado_em, proxima_tentativa)
+            VALUES (:id, :rota, :envelope, :criadoEm, :criadoEm)
+            """,
+        nativeQuery = true
+    )
+    int registrar(
+        @Param("id") UUID id,
+        @Param("rota") String rota,
+        @Param("envelope") String envelope,
+        @Param("criadoEm") Instant criadoEm
+    );
 
-    @Query(value = """
-                SELECT * FROM evento_pendente
-                WHERE publicado_em IS NULL AND proxima_tentativa <= :agora
-                ORDER BY proxima_tentativa, criado_em, id
-                LIMIT 1 FOR UPDATE SKIP LOCKED
-                """, nativeQuery = true)
+    @Query(
+        value = """
+            SELECT * FROM evento_pendente
+            WHERE publicado_em IS NULL AND proxima_tentativa <= :agora
+            ORDER BY proxima_tentativa, criado_em, id
+            LIMIT 1 FOR UPDATE SKIP LOCKED
+            """,
+        nativeQuery = true
+    )
     Optional<EventoPendente> buscarProximoParaPublicacao(@Param("agora") Instant agora);
 }

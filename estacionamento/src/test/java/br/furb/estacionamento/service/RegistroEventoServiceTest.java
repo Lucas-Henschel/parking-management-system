@@ -1,4 +1,4 @@
-package br.furb.estacionamento.messaging;
+package br.furb.estacionamento.service;
 
 import br.furb.estacionamento.config.RabbitMQConfig;
 import br.furb.estacionamento.dto.CalcularPagamentoPayload;
@@ -19,25 +19,25 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
-class TicketPublisherTest {
+class RegistroEventoServiceTest {
 
     @Mock
     private EventoPendenteRepository eventos;
 
     private final JsonMapper mapper = JsonMapper.builder().build();
 
-    private TicketPublisher ticketPublisher;
+    private RegistroEventoService registroEvento;
 
     @BeforeEach
     void setUp() {
-        ticketPublisher = new TicketPublisher(eventos, mapper);
+        registroEvento = new RegistroEventoService(eventos, mapper);
     }
 
     @Test
-    void publicaReservaComEnvelopeCorrelacionadoAoTicket() {
+    void registraReservaComEnvelopeCorrelacionadoAoTicket() {
         UUID ticketId = UUID.randomUUID();
 
-        ticketPublisher.publicarReserva(ticketId);
+        registroEvento.registrarReserva(ticketId);
 
         ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<UUID> id = ArgumentCaptor.forClass(UUID.class);
@@ -51,12 +51,12 @@ class TicketPublisherTest {
     }
 
     @Test
-    void publicaCalculoComDatasInstant() {
+    void registraCalculoComDatasInstant() {
         UUID ticketId = UUID.randomUUID();
         CalcularPagamentoPayload payload = new CalcularPagamentoPayload(
                 ticketId, Instant.parse("2026-10-04T12:00:00Z"), Instant.parse("2026-10-04T14:00:00Z"));
 
-        ticketPublisher.publicarCalculoPagamento(payload);
+        registroEvento.registrarCalculoPagamento(payload);
 
         ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
         verify(eventos).registrar(org.mockito.ArgumentMatchers.any(),

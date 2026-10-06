@@ -20,7 +20,6 @@ import java.util.UUID;
 @Entity
 @Table(name = "ticket")
 public class Ticket {
-
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -53,19 +52,6 @@ public class Ticket {
     @Column(name = "tentativas_reserva", nullable = false)
     private int tentativasReserva = 1;
 
-    public int getTentativasReserva() {
-        return tentativasReserva;
-    }
-
-    public void registrarNovaTentativaReserva() {
-        tentativasReserva++;
-    }
-
-    public UUID getPagamentoId() { return pagamentoId; }
-    public void setPagamentoId(UUID pagamentoId) { this.pagamentoId = pagamentoId; }
-    public BigDecimal getValorConfirmado() { return valorConfirmado; }
-    public void setValorConfirmado(BigDecimal valorConfirmado) { this.valorConfirmado = valorConfirmado; }
-
     protected Ticket() {
     }
 
@@ -75,55 +61,52 @@ public class Ticket {
         this.status = TicketStatus.PENDENTE;
     }
 
-    public UUID getId() {
-        return id;
-    }
+    public UUID getId() { return id; }
+    public Veiculo getVeiculo() { return veiculo; }
+    public UUID getVagaId() { return vagaId; }
+    public Instant getEntrada() { return entrada; }
+    public Instant getSaida() { return saida; }
+    public TicketStatus getStatus() { return status; }
+    public BigDecimal getValor() { return valor; }
+    public UUID getPagamentoId() { return pagamentoId; }
+    public BigDecimal getValorConfirmado() { return valorConfirmado; }
+    public int getTentativasReserva() { return tentativasReserva; }
 
-    public Veiculo getVeiculo() {
-        return veiculo;
-    }
-
-    public void setVeiculo(Veiculo veiculo) {
-        this.veiculo = veiculo;
-    }
-
-    public UUID getVagaId() {
-        return vagaId;
-    }
-
-    public void setVagaId(UUID vagaId) {
+    public void confirmarVaga(UUID vagaId) {
         this.vagaId = vagaId;
+        this.status = TicketStatus.ATIVO;
     }
 
-    public Instant getEntrada() {
-        return entrada;
-    }
-
-    public void setEntrada(Instant entrada) {
-        this.entrada = entrada;
-    }
-
-    public Instant getSaida() {
-        return saida;
-    }
-
-    public void setSaida(Instant saida) {
+    public void recusar(Instant saida) {
+        this.status = TicketStatus.RECUSADO;
         this.saida = saida;
     }
 
-    public TicketStatus getStatus() {
-        return status;
+    public void registrarNovaTentativaReserva() {
+        tentativasReserva++;
     }
 
-    public void setStatus(TicketStatus status) {
-        this.status = status;
+    public void registrarSaida(Instant saida) {
+        this.saida = saida;
     }
 
-    public BigDecimal getValor() {
-        return valor;
-    }
-
-    public void setValor(BigDecimal valor) {
+    public void registrarCalculo(UUID pagamentoId, BigDecimal valor) {
+        this.pagamentoId = pagamentoId;
         this.valor = valor;
+        this.status = TicketStatus.AGUARDANDO_PAGAMENTO;
+    }
+
+    public void registrarConfirmacaoAntecipada(UUID pagamentoId, BigDecimal valorConfirmado) {
+        this.pagamentoId = pagamentoId;
+        this.valorConfirmado = valorConfirmado;
+    }
+
+    public void vincularPagamento(UUID pagamentoId) {
+        this.pagamentoId = pagamentoId;
+    }
+
+    public void finalizar(BigDecimal valorConfirmado) {
+        this.valorConfirmado = valorConfirmado;
+        this.status = TicketStatus.FINALIZADO;
     }
 }

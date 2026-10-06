@@ -48,6 +48,9 @@ public class EventoPendente {
     public UUID obterId() { return id; }
     public String obterRota() { return rota; }
     public String obterEnvelope() { return envelope; }
+    public int obterTentativas() { return tentativas; }
+    public Instant obterProximaTentativa() { return proximaTentativa; }
+    public Instant obterPublicadoEm() { return publicadoEm; }
 
     public void marcarComoPublicado(Instant agora) {
         publicadoEm = agora;

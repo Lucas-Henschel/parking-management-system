@@ -12,7 +12,6 @@ import java.util.UUID;
 @Entity
 @Table(name = "veiculo")
 public class Veiculo {
-
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -33,9 +32,5 @@ public class Veiculo {
 
     public String getPlaca() {
         return placa;
-    }
-
-    public void setPlaca(String placa) {
-        this.placa = placa;
     }
 }

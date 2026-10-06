@@ -24,15 +24,23 @@ public class TicketOutboxPublisher {
 
     public void publicar(EventoPendente evento) {
         MessageProperties propriedades = new MessageProperties();
+
         propriedades.setContentType(MessageProperties.CONTENT_TYPE_JSON);
         propriedades.setContentEncoding(StandardCharsets.UTF_8.name());
         propriedades.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
         propriedades.setMessageId(evento.obterId().toString());
         CorrelationData confirmacao = new CorrelationData(evento.obterId().toString());
-        rabbit.send(RabbitMQConfig.EXCHANGE, evento.obterRota(),
-                new Message(evento.obterEnvelope().getBytes(StandardCharsets.UTF_8), propriedades), confirmacao);
+
+        rabbit.send(
+            RabbitMQConfig.EXCHANGE,
+            evento.obterRota(),
+            new Message(evento.obterEnvelope().getBytes(StandardCharsets.UTF_8), propriedades),
+            confirmacao
+        );
+
         try {
             var resultado = confirmacao.getFuture().get(10, TimeUnit.SECONDS);
+
             if (!resultado.ack() || confirmacao.getReturned() != null) {
                 throw new IllegalStateException("O broker não confirmou o roteamento do evento " + evento.obterId());
             }

@@ -13,12 +13,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface TicketRepository extends JpaRepository<Ticket, UUID> {
-
     boolean existsByVeiculo_IdAndStatusIn(UUID veiculoId, List<TicketStatus> statuses);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select ticket from Ticket ticket join fetch ticket.veiculo where ticket.id = :ticketId")
-    Optional<Ticket> findByIdForUpdate(@Param("ticketId") UUID ticketId);
-
-    List<Ticket> findByVeiculo_IdOrderByEntradaDesc(UUID veiculoId);
+    Optional<Ticket> buscarParaAlteracao(@Param("ticketId") UUID ticketId);
 }

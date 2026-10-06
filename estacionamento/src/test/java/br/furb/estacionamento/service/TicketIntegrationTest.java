@@ -2,7 +2,11 @@ package br.furb.estacionamento.service;
 
 import br.furb.estacionamento.PostgresTestConfiguration;
 import br.furb.estacionamento.dto.*;
+import br.furb.estacionamento.enums.MotivoIndisponibilidade;
+import br.furb.estacionamento.enums.PagamentoStatus;
+import br.furb.estacionamento.enums.ResultadoPublicacao;
 import br.furb.estacionamento.enums.TicketStatus;
+import br.furb.estacionamento.enums.TipoMensagem;
 import br.furb.estacionamento.messaging.TicketOutboxPublisher;
 import br.furb.estacionamento.entity.EventoPendente;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,7 +34,8 @@ import static org.mockito.Mockito.*;
 @Import(PostgresTestConfiguration.class)
 class TicketIntegrationTest {
     @Autowired TicketService tickets;
-    @Autowired TicketMessageHandler handler;
+    @Autowired ResultadoVagaService vagas;
+    @Autowired PagamentoTicketService pagamentos;
     @Autowired PublicacaoOutboxService outbox;
     @Autowired JdbcTemplate banco;
     @Autowired PlatformTransactionManager transacoes;
@@ -43,12 +48,12 @@ class TicketIntegrationTest {
 
     private UUID ticketComSaida() {
         UUID id = tickets.registrarEntrada("ABC1234").id();
-        tickets.registrarVagaConfirmada(id, UUID.randomUUID());
+        vagas.registrarVagaConfirmada(id, UUID.randomUUID());
         tickets.registrarSaida(id);
         return id;
     }
 
-    private <T> MensagemEnvelope<T> mensagem(UUID ticketId, String tipo, T payload) {
+    private <T> MensagemEnvelope<T> mensagem(UUID ticketId, TipoMensagem tipo, T payload) {
         return new MensagemEnvelope<>(UUID.randomUUID(), ticketId, tipo, Instant.now(), payload);
     }
 
@@ -79,7 +84,7 @@ class TicketIntegrationTest {
                     largada.await();
                     try { tickets.registrarEntrada("ABC1234"); return true; }
                     catch (org.springframework.dao.DataIntegrityViolationException
-                            | org.springframework.web.server.ResponseStatusException conflito) { return false; }
+                            | br.furb.estacionamento.exception.ConflitoNegocioException conflito) { return false; }
                 }));
             }
             largada.countDown();
@@ -97,18 +102,18 @@ class TicketIntegrationTest {
     void confirmacaoAntecipadaEDuplicatasFinalizamUmaVez() {
         UUID id = ticketComSaida();
         UUID pagamentoId = UUID.randomUUID();
-        var confirmado = mensagem(id, "PAGAMENTO_CONFIRMADO",
-                new PagamentoConfirmadoPayload(pagamentoId, id, new BigDecimal("20.00"), "PIX", "PAGO"));
-        handler.processarPagamentoConfirmado(confirmado);
-        handler.processarPagamentoConfirmado(confirmado);
+        var confirmado = mensagem(id, TipoMensagem.PAGAMENTO_CONFIRMADO,
+                new PagamentoConfirmadoPayload(pagamentoId, id, new BigDecimal("20.00"), "PIX", PagamentoStatus.PAGO));
+        pagamentos.processarPagamentoConfirmado(confirmado);
+        pagamentos.processarPagamentoConfirmado(confirmado);
         assertEquals(TicketStatus.ATIVO, tickets.buscarPorId(id).status());
         assertEquals(2, contar("evento_pendente"));
-        var calculado = mensagem(id, "PAGAMENTO_CALCULADO",
-                new PagamentoCalculadoPayload(pagamentoId, id, new BigDecimal("20.00"), "CALCULADO"));
-        handler.processarPagamentoCalculado(calculado);
-        handler.processarPagamentoCalculado(calculado);
-        handler.processarPagamentoConfirmado(mensagem(id, "PAGAMENTO_CONFIRMADO", confirmado.payload()));
-        handler.processarPagamentoCalculado(mensagem(id, "PAGAMENTO_CALCULADO", calculado.payload()));
+        var calculado = mensagem(id, TipoMensagem.PAGAMENTO_CALCULADO,
+                new PagamentoCalculadoPayload(pagamentoId, id, new BigDecimal("20.00"), PagamentoStatus.CALCULADO));
+        pagamentos.processarPagamentoCalculado(calculado);
+        pagamentos.processarPagamentoCalculado(calculado);
+        pagamentos.processarPagamentoConfirmado(mensagem(id, TipoMensagem.PAGAMENTO_CONFIRMADO, confirmado.payload()));
+        pagamentos.processarPagamentoCalculado(mensagem(id, TipoMensagem.PAGAMENTO_CALCULADO, calculado.payload()));
         tickets.registrarSaida(id);
         assertEquals(TicketStatus.FINALIZADO, tickets.buscarPorId(id).status());
         assertEquals(3, contar("evento_pendente"));
@@ -118,16 +123,16 @@ class TicketIntegrationTest {
     void valorDivergenteDesfazInboxEMantemConfirmacaoAntecipada() {
         UUID id = ticketComSaida();
         UUID pagamentoId = UUID.randomUUID();
-        tickets.confirmarPagamento(id, pagamentoId, new BigDecimal("20.00"));
-        var errado = mensagem(id, "PAGAMENTO_CALCULADO",
-                new PagamentoCalculadoPayload(pagamentoId, id, new BigDecimal("10.00"), "CALCULADO"));
-        assertThrows(org.springframework.web.server.ResponseStatusException.class,
-                () -> handler.processarPagamentoCalculado(errado));
+        pagamentos.confirmarPagamento(id, pagamentoId, new BigDecimal("20.00"));
+        var errado = mensagem(id, TipoMensagem.PAGAMENTO_CALCULADO,
+                new PagamentoCalculadoPayload(pagamentoId, id, new BigDecimal("10.00"), PagamentoStatus.CALCULADO));
+        assertThrows(br.furb.estacionamento.exception.ConflitoNegocioException.class,
+                () -> pagamentos.processarPagamentoCalculado(errado));
         assertEquals(0, contar("mensagem_processada"));
         assertEquals(TicketStatus.ATIVO, tickets.buscarPorId(id).status());
         assertNull(tickets.buscarPorId(id).valor());
         assertEquals(2, contar("evento_pendente"));
-        tickets.registrarPagamentoCalculado(id, pagamentoId, new BigDecimal("20.00"));
+        pagamentos.registrarPagamentoCalculado(id, pagamentoId, new BigDecimal("20.00"));
         assertEquals(TicketStatus.FINALIZADO, tickets.buscarPorId(id).status());
     }
 
@@ -135,10 +140,10 @@ class TicketIntegrationTest {
     void valoresInvalidosNaoAlteramTicketNemInbox() {
         UUID id = ticketComSaida();
         for (BigDecimal valor : new BigDecimal[]{null, new BigDecimal("-1"), new BigDecimal("1.001")}) {
-            var invalido = mensagem(id, "PAGAMENTO_CALCULADO",
-                    new PagamentoCalculadoPayload(UUID.randomUUID(), id, valor, "CALCULADO"));
-            assertThrows(org.springframework.web.server.ResponseStatusException.class,
-                    () -> handler.processarPagamentoCalculado(invalido));
+            var invalido = mensagem(id, TipoMensagem.PAGAMENTO_CALCULADO,
+                    new PagamentoCalculadoPayload(UUID.randomUUID(), id, valor, PagamentoStatus.CALCULADO));
+            assertThrows(IllegalArgumentException.class,
+                    () -> pagamentos.processarPagamentoCalculado(invalido));
         }
         assertEquals(0, contar("mensagem_processada"));
         assertNull(tickets.buscarPorId(id).valor());
@@ -148,28 +153,28 @@ class TicketIntegrationTest {
     void falhaNoBrokerMantemEventoEReenviaMesmoMessageId() {
         tickets.registrarEntrada("ABC1234");
         doThrow(new IllegalStateException("broker indisponível")).doNothing().when(publisher).publicar(any());
-        assertTrue(outbox.publicarProximo());
+        assertEquals(ResultadoPublicacao.FALHOU, outbox.publicarProximo());
         assertNull(banco.queryForObject("SELECT publicado_em FROM evento_pendente", Object.class));
         assertEquals(1, banco.queryForObject("SELECT tentativas FROM evento_pendente", Integer.class));
-        assertFalse(outbox.publicarProximo());
+        assertEquals(ResultadoPublicacao.SEM_EVENTO, outbox.publicarProximo());
         banco.update("UPDATE evento_pendente SET proxima_tentativa = now() - interval '1 second'");
-        assertTrue(outbox.publicarProximo());
+        assertEquals(ResultadoPublicacao.PUBLICADO, outbox.publicarProximo());
         var eventos = org.mockito.ArgumentCaptor.forClass(EventoPendente.class);
         verify(publisher, times(2)).publicar(eventos.capture());
         assertEquals(eventos.getAllValues().get(0).obterId(), eventos.getAllValues().get(1).obterId());
         assertEquals(eventos.getAllValues().get(0).obterEnvelope(), eventos.getAllValues().get(1).obterEnvelope());
-        assertFalse(outbox.publicarProximo());
+        assertEquals(ResultadoPublicacao.SEM_EVENTO, outbox.publicarProximo());
     }
 
     @Test
     void pagamentosConcorrentesGeramUmaLiberacao() throws Exception {
         UUID id = ticketComSaida(); UUID pagamentoId = UUID.randomUUID();
-        tickets.registrarPagamentoCalculado(id, pagamentoId, new BigDecimal("20.00"));
+        pagamentos.registrarPagamentoCalculado(id, pagamentoId, new BigDecimal("20.00"));
         var executor = Executors.newFixedThreadPool(4);
         try {
             var resultados = new ArrayList<Future<?>>();
             for (int i = 0; i < 4; i++) resultados.add(executor.submit(() ->
-                    tickets.confirmarPagamento(id, pagamentoId, new BigDecimal("20.00"))));
+                    pagamentos.confirmarPagamento(id, pagamentoId, new BigDecimal("20.00"))));
             for (var resultado : resultados) resultado.get(20, TimeUnit.SECONDS);
         } finally {
             executor.shutdownNow();
@@ -188,12 +193,12 @@ class TicketIntegrationTest {
     @Test
     void consumidoresConcorrentesDaMesmaMensagemGravamUmaInbox() throws Exception {
         UUID id = ticketComSaida();
-        var calculado = mensagem(id, "PAGAMENTO_CALCULADO",
-                new PagamentoCalculadoPayload(UUID.randomUUID(), id, new BigDecimal("20.00"), "CALCULADO"));
+        var calculado = mensagem(id, TipoMensagem.PAGAMENTO_CALCULADO,
+                new PagamentoCalculadoPayload(UUID.randomUUID(), id, new BigDecimal("20.00"), PagamentoStatus.CALCULADO));
         var executor = Executors.newFixedThreadPool(4);
         try {
             var resultados = new ArrayList<Future<?>>();
-            for (int i = 0; i < 4; i++) resultados.add(executor.submit(() -> handler.processarPagamentoCalculado(calculado)));
+            for (int i = 0; i < 4; i++) resultados.add(executor.submit(() -> pagamentos.processarPagamentoCalculado(calculado)));
             for (var resultado : resultados) resultado.get(20, TimeUnit.SECONDS);
         } finally {
             executor.shutdownNow();
@@ -214,15 +219,15 @@ class TicketIntegrationTest {
             executor.shutdownNow();
         }
         verify(publisher, times(1)).publicar(any());
-        assertFalse(outbox.publicarProximo());
+        assertEquals(ResultadoPublicacao.SEM_EVENTO, outbox.publicarProximo());
     }
 
     @Test
     void pagamentoComIdentificadorDivergenteNaoFinalizaTicket() {
         UUID id = ticketComSaida();
-        tickets.registrarPagamentoCalculado(id, UUID.randomUUID(), new BigDecimal("20.00"));
-        assertThrows(org.springframework.web.server.ResponseStatusException.class,
-                () -> tickets.confirmarPagamento(id, UUID.randomUUID(), new BigDecimal("20.00")));
+        pagamentos.registrarPagamentoCalculado(id, UUID.randomUUID(), new BigDecimal("20.00"));
+        assertThrows(br.furb.estacionamento.exception.ConflitoNegocioException.class,
+                () -> pagamentos.confirmarPagamento(id, UUID.randomUUID(), new BigDecimal("20.00")));
         assertEquals(TicketStatus.AGUARDANDO_PAGAMENTO, tickets.buscarPorId(id).status());
         assertEquals(2, contar("evento_pendente"));
     }
@@ -232,9 +237,9 @@ class TicketIntegrationTest {
         UUID id = tickets.registrarEntrada("ABC1234").id();
         assertEquals(1, tickets.buscarPorId(id).tentativasReserva());
         for (int tentativa = 1; tentativa <= 3; tentativa++) {
-            var indisponivel = mensagem(id, "VAGA_INDISPONIVEL", new VagaResultadoPayload(id, null, null, "SEM_VAGAS"));
-            handler.processarResultadoVaga(indisponivel);
-            handler.processarResultadoVaga(indisponivel);
+            var indisponivel = mensagem(id, TipoMensagem.VAGA_INDISPONIVEL, new VagaResultadoPayload(id, null, null, MotivoIndisponibilidade.SEM_VAGAS));
+            vagas.processarResultadoVaga(indisponivel);
+            vagas.processarResultadoVaga(indisponivel);
             var ticket = tickets.buscarPorId(id);
             assertEquals(Math.min(tentativa + 1, 3), ticket.tentativasReserva());
             assertEquals(tentativa < 3 ? TicketStatus.PENDENTE : TicketStatus.RECUSADO, ticket.status());
@@ -247,7 +252,7 @@ class TicketIntegrationTest {
         assertNull(ticket.vagaId());
         assertEquals(3, contar("mensagem_processada"));
         assertEquals(0, banco.queryForObject("SELECT count(*) FROM evento_pendente WHERE rota <> 'vaga.reservar'", Integer.class));
-        handler.processarResultadoVaga(mensagem(id, "VAGA_INDISPONIVEL", new VagaResultadoPayload(id, null, null, "SEM_VAGAS")));
+        vagas.processarResultadoVaga(mensagem(id, TipoMensagem.VAGA_INDISPONIVEL, new VagaResultadoPayload(id, null, null, MotivoIndisponibilidade.SEM_VAGAS)));
         assertEquals(3, contar("evento_pendente"));
         UUID novaEntrada = tickets.registrarEntrada("ABC1234").id();
         assertNotEquals(id, novaEntrada);
@@ -258,11 +263,11 @@ class TicketIntegrationTest {
     void vagaEncontradaNaTerceiraBuscaAtivaMesmoTicket() {
         UUID id = tickets.registrarEntrada("ABC1234").id();
         for (int i = 0; i < 2; i++) {
-            handler.processarResultadoVaga(mensagem(id, "VAGA_INDISPONIVEL",
-                    new VagaResultadoPayload(id, null, null, "SEM_VAGAS")));
+            vagas.processarResultadoVaga(mensagem(id, TipoMensagem.VAGA_INDISPONIVEL,
+                    new VagaResultadoPayload(id, null, null, MotivoIndisponibilidade.SEM_VAGAS)));
         }
         UUID vagaId = UUID.randomUUID();
-        handler.processarResultadoVaga(mensagem(id, "VAGA_RESERVADA", new VagaResultadoPayload(id, vagaId, "A-1", null)));
+        vagas.processarResultadoVaga(mensagem(id, TipoMensagem.VAGA_RESERVADA, new VagaResultadoPayload(id, vagaId, "A-1", null)));
         var ticket = tickets.buscarPorId(id);
         assertEquals(TicketStatus.ATIVO, ticket.status());
         assertEquals(3, ticket.tentativasReserva());
@@ -277,11 +282,11 @@ class TicketIntegrationTest {
     @Test
     void respostaDuplicadaConcorrenteSolicitaSomenteUmaNovaBusca() throws Exception {
         UUID id = tickets.registrarEntrada("ABC1234").id();
-        var indisponivel = mensagem(id, "VAGA_INDISPONIVEL", new VagaResultadoPayload(id, null, null, "SEM_VAGAS"));
+        var indisponivel = mensagem(id, TipoMensagem.VAGA_INDISPONIVEL, new VagaResultadoPayload(id, null, null, MotivoIndisponibilidade.SEM_VAGAS));
         var executor = Executors.newFixedThreadPool(4);
         try {
             var resultados = new ArrayList<Future<?>>();
-            for (int i = 0; i < 4; i++) resultados.add(executor.submit(() -> handler.processarResultadoVaga(indisponivel)));
+            for (int i = 0; i < 4; i++) resultados.add(executor.submit(() -> vagas.processarResultadoVaga(indisponivel)));
             for (var resultado : resultados) resultado.get(20, TimeUnit.SECONDS);
         } finally {
             executor.shutdownNow();
@@ -294,8 +299,8 @@ class TicketIntegrationTest {
     @Test
     void ticketFinalizadoNoServicoDeVagasNaoGeraNovasTentativas() {
         UUID id = tickets.registrarEntrada("ABC1234").id();
-        handler.processarResultadoVaga(mensagem(id, "VAGA_INDISPONIVEL",
-                new VagaResultadoPayload(id, null, null, "TICKET_FINALIZADO")));
+        vagas.processarResultadoVaga(mensagem(id, TipoMensagem.VAGA_INDISPONIVEL,
+                new VagaResultadoPayload(id, null, null, MotivoIndisponibilidade.TICKET_FINALIZADO)));
         assertEquals(TicketStatus.RECUSADO, tickets.buscarPorId(id).status());
         assertNotNull(tickets.buscarPorId(id).saida());
         assertEquals(1, contar("evento_pendente"));

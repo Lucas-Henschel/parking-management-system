@@ -22,7 +22,6 @@ import java.util.UUID;
 @RequestMapping
 @Tag(name = "Tickets", description = "Entrada e consulta de tickets do estacionamento")
 public class TicketController {
-
     private final TicketService ticketService;
 
     public TicketController(TicketService ticketService) {
@@ -33,16 +32,20 @@ public class TicketController {
     @Operation(summary = "Registrar entrada de veículo")
     public ResponseEntity<TicketResponse> registrarEntrada(@Valid @RequestBody EntradaRequest request) {
         TicketResponse ticket = ticketService.registrarEntrada(request.placa());
+
         URI location = ServletUriComponentsBuilder.fromCurrentContextPath()
-                .path("/tickets/{ticketId}")
-                .buildAndExpand(ticket.id())
-                .toUri();
+            .path("/tickets/{ticketId}")
+            .buildAndExpand(ticket.id())
+            .toUri();
+
         return ResponseEntity.accepted().location(location).body(ticket);
     }
 
     @PostMapping("/tickets/{ticketId}/saida")
-    @Operation(summary = "Registrar saída e solicitar cálculo do pagamento",
-            description = "Aceita a saída com 202. Consulte o ticket para acompanhar cálculo e pagamento. Repetições não geram novo cálculo.")
+    @Operation(
+        summary = "Registrar saída e solicitar cálculo do pagamento",
+        description = "Aceita a saída com 202. Consulte o ticket para acompanhar cálculo e pagamento. Repetições não geram novo cálculo."
+    )
     public ResponseEntity<TicketResponse> registrarSaida(@PathVariable UUID ticketId) {
         return ResponseEntity.accepted().body(ticketService.registrarSaida(ticketId));
     }

@@ -7,6 +7,5 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface VeiculoRepository extends JpaRepository<Veiculo, UUID> {
-
     Optional<Veiculo> findByPlaca(String placa);
 }

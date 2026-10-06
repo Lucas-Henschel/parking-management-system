@@ -11,7 +11,6 @@ import java.util.UUID;
 @Entity
 @Table(name = "mensagem_processada")
 public class MensagemProcessada {
-
     @Id
     @Column(name = "message_id", nullable = false)
     private UUID messageId;
