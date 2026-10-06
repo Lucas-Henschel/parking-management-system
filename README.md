@@ -16,144 +16,7 @@ RabbitMQ: AMQP em `5672`, painel de administração em http://localhost:15672.
 
 ## Mensagens (RabbitMQ)
 
-Exchange única `parking.exchange` (topic, durável). Cada fila tem uma DLQ `<fila>.dlq`. Quem consome declara a própria fila.
-
-| Mensagem | Publica → consome | Routing key | Fila |
-|---|---|---|---|
-| `RESERVAR_VAGA` | estacionamento → vagas | `vaga.reservar` | `vaga.reservar.queue` |
-| `LIBERAR_VAGA` | estacionamento → vagas | `vaga.liberar` | `vaga.liberar.queue` |
-| `VAGA_RESERVADA` | vagas → estacionamento | `vaga.reservada` | `estacionamento.vaga-resultado.queue` |
-| `VAGA_INDISPONIVEL` | vagas → estacionamento | `vaga.indisponivel` | `estacionamento.vaga-resultado.queue` |
-| `CALCULAR_PAGAMENTO` | estacionamento → pagamento | `pagamento.calcular` | `pagamento.calcular.queue` |
-| `PAGAMENTO_CALCULADO` | pagamento → estacionamento | `pagamento.calculado` | `estacionamento.pagamento-calculado.queue` |
-| `PAGAMENTO_CONFIRMADO` | pagamento → estacionamento | `pagamento.confirmado` | `estacionamento.pagamento-confirmado.queue` |
-
-### Envelope
-
-Toda mensagem é enviada dentro do mesmo envelope (JSON). `correlationId` é sempre o `ticketId`. Consumidores ignoram `messageId` já processado (idempotência).
-
-| Campo | Tipo | Descrição |
-|---|---|---|
-| `messageId` | UUID | Identifica a mensagem (idempotência) |
-| `correlationId` | UUID | `ticketId`, para rastrear o fluxo entre serviços |
-| `tipo` | string | Nome da mensagem (ex.: `RESERVAR_VAGA`) |
-| `timestamp` | string | Data/hora em ISO-8601 UTC |
-| `payload` | objeto | Conteúdo, conforme a mensagem |
-
-Datas em ISO-8601 UTC (`Instant`), valores em decimal (`20.00`) e IDs em UUID.
-
-### Exemplos de payload
-
-**`RESERVAR_VAGA`** (estacionamento → vagas)
-
-```json
-{
-  "messageId": "0b8f6c1e-3d4a-4a57-9a11-6f1c2d7e0001",
-  "correlationId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-  "tipo": "RESERVAR_VAGA",
-  "timestamp": "2026-10-04T12:00:00Z",
-  "payload": {
-    "ticketId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c"
-  }
-}
-```
-
-**`VAGA_RESERVADA`** (vagas → estacionamento)
-
-```json
-{
-  "messageId": "0b8f6c1e-3d4a-4a57-9a11-6f1c2d7e0002",
-  "correlationId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-  "tipo": "VAGA_RESERVADA",
-  "timestamp": "2026-10-04T12:00:01Z",
-  "payload": {
-    "ticketId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-    "vagaId": "5e7d1a90-2c3b-4d6e-8f01-a2b3c4d5e6f7",
-    "numeroVaga": "A-12"
-  }
-}
-```
-
-**`VAGA_INDISPONIVEL`** (vagas → estacionamento)
-
-```json
-{
-  "messageId": "0b8f6c1e-3d4a-4a57-9a11-6f1c2d7e0003",
-  "correlationId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-  "tipo": "VAGA_INDISPONIVEL",
-  "timestamp": "2026-10-04T12:00:01Z",
-  "payload": {
-    "ticketId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-    "motivo": "SEM_VAGAS"
-  }
-}
-```
-
-**`CALCULAR_PAGAMENTO`** (estacionamento → pagamento)
-
-```json
-{
-  "messageId": "0b8f6c1e-3d4a-4a57-9a11-6f1c2d7e0004",
-  "correlationId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-  "tipo": "CALCULAR_PAGAMENTO",
-  "timestamp": "2026-10-04T14:00:00Z",
-  "payload": {
-    "ticketId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-    "entrada": "2026-10-04T12:00:00Z",
-    "saida": "2026-10-04T14:00:00Z"
-  }
-}
-```
-
-**`PAGAMENTO_CALCULADO`** (pagamento → estacionamento)
-
-```json
-{
-  "messageId": "0b8f6c1e-3d4a-4a57-9a11-6f1c2d7e0005",
-  "correlationId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-  "tipo": "PAGAMENTO_CALCULADO",
-  "timestamp": "2026-10-04T14:00:01Z",
-  "payload": {
-    "pagamentoId": "9d3f4e21-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
-    "ticketId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-    "valor": 20.00,
-    "status": "CALCULADO"
-  }
-}
-```
-
-**`PAGAMENTO_CONFIRMADO`** (pagamento → estacionamento)
-
-```json
-{
-  "messageId": "0b8f6c1e-3d4a-4a57-9a11-6f1c2d7e0006",
-  "correlationId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-  "tipo": "PAGAMENTO_CONFIRMADO",
-  "timestamp": "2026-10-04T14:05:00Z",
-  "payload": {
-    "pagamentoId": "9d3f4e21-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
-    "ticketId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-    "valor": 20.00,
-    "metodo": "PIX",
-    "status": "PAGO"
-  }
-}
-```
-
-**`LIBERAR_VAGA`** (estacionamento → vagas)
-
-```json
-{
-  "messageId": "0b8f6c1e-3d4a-4a57-9a11-6f1c2d7e0007",
-  "correlationId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-  "tipo": "LIBERAR_VAGA",
-  "timestamp": "2026-10-04T14:05:01Z",
-  "payload": {
-    "ticketId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
-    "vagaId": "5e7d1a90-2c3b-4d6e-8f01-a2b3c4d5e6f7"
-  }
-}
-```
+A comunicação entre os serviços é assíncrona, pela exchange `parking.exchange`. As filas, routing keys, o envelope e exemplos de payload de cada mensagem estão em [docs/mensagens-rabbitmq.md](docs/mensagens-rabbitmq.md).
 
 ## Stack
 
@@ -199,6 +62,24 @@ Para parar a infraestrutura (mantendo os dados) ou apagar tudo:
 docker compose down
 docker compose down -v
 ```
+
+## Teste de escalabilidade
+
+Sobe os três serviços com N réplicas (Docker Compose + Nginx) e roda o k6 contra eles. Precisa só de Docker. Detalhes do Nginx e dos scripts do k6 em [docs/k6-nginx.md](docs/k6-nginx.md).
+
+```bash
+escala/rodar.sh correcao 3   # N+M entradas concorrentes, saída e pagamento; confere invariantes no SQL
+escala/rodar.sh vazao 2      # rampa de carga crescente de POST /entrada; mede vazão e latência
+```
+
+O segundo argumento é o número de réplicas de cada serviço (padrão 1). Os resultados (resumo.txt, fila.csv, stats.txt e os JSON do k6) ficam em escala/resultados/ e não vão para o git. Variáveis opcionais: `VAGAS`, `EXTRAS` (correção) e `PASSOS`, `DURACAO_S` (vazão; padrão `PASSOS=50,100,200,400`, `DURACAO_S=20`).
+
+Atenção:
+
+- O teste usa o projeto compose próprio `parking-escala`: seus volumes são isolados dos da stack de desenvolvimento e são removidos ao final (`down -v` só no projeto `parking-escala`).
+- Ele não convive com a stack de desenvolvimento: as portas 5433-5435, 5672, 15672 e 8081-8083 precisam estar livres (inclusive serviços rodando pela IDE). Pare a stack antes com `docker compose down` (sem `-v`); o script aborta com uma mensagem se detectar conflito.
+- `MANTER=1 escala/rodar.sh ...` mantém o ambiente de pé no fim, para inspeção. Para derrubá-lo: `docker compose -p parking-escala -f docker-compose.yml -f docker-compose.escala.yml down -v`.
+- No modo vazão, o k6 mede a carga oferecida; a "Vazão concluída" é calculada pelas decisões de reserva registradas no banco do estacionamento.
 
 ## Configuração
 
