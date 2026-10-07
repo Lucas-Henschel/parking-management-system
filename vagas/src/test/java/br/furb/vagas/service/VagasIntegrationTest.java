@@ -55,6 +55,28 @@ class VagasIntegrationTest {
                 new LiberarVagaRequest(ticketId, vagaId));
     }
     @Test
+    void deveReservarNaTerceiraBuscaEIgnorarReentregaDaSegunda() {
+        var vaga = cadastrarVaga();
+        UUID ocupante = UUID.randomUUID();
+        UUID esperando = UUID.randomUUID();
+        reservaVagaService.reservar(mensagem(ocupante));
+        var primeira = mensagem(esperando);
+        var segunda = mensagem(esperando);
+        reservaVagaService.reservar(primeira);
+        reservaVagaService.reservar(segunda);
+        assertThat(banco.queryForObject("SELECT situacao FROM reserva_ticket WHERE ticket_id = ?",
+            String.class, esperando)).isEqualTo("INDISPONIVEL");
+
+        liberacaoVagaService.liberar(liberacao(ocupante, vaga.id()));
+        reservaVagaService.reservar(segunda);
+        assertThat(vagaService.consultar(vaga.id()).status()).isEqualTo(VagaStatus.LIVRE);
+        reservaVagaService.reservar(mensagem(esperando));
+        assertThat(vagaService.consultar(vaga.id()).ticketId()).isEqualTo(esperando);
+        assertThat(banco.queryForObject("SELECT count(*) FROM evento_pendente WHERE envelope::json->>'correlationId' = ?",
+            Integer.class, esperando.toString())).isEqualTo(3);
+    }
+
+    @Test
     void devePersistirReservaInboxEOutboxAtomicamente() {
         var vaga = cadastrarVaga(); UUID ticketId = UUID.randomUUID(); var mensagem = mensagem(ticketId);
         reservaVagaService.reservar(mensagem); reservaVagaService.reservar(mensagem);

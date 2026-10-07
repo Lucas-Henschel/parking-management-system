@@ -24,6 +24,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
 
 class ReservaVagaServiceTest {
     private final MensagemProcessadaRepository mensagens = mock(MensagemProcessadaRepository.class);
@@ -89,13 +90,35 @@ class ReservaVagaServiceTest {
     }
 
     @Test
-    void deveRepetirIndisponibilidadeDoMesmoTicket() {
+    void deveBuscarNovamenteAposIndisponibilidadeDoMesmoTicket() {
         reserva.registrarIndisponibilidade();
 
         servico.reservar(envelope);
 
-        verifyNoInteractions(vagas);
+        verify(vagas).buscarLivreParaReserva();
         verify(resultados).registrarIndisponibilidade(ticketId, MotivoIndisponibilidade.SEM_VAGAS);
+    }
+
+    @Test
+    void tresMensagensDiferentesDoMesmoTicketExecutamTresBuscas() {
+        when(mensagens.registrarSeAusente(any(UUID.class), any(Instant.class))).thenReturn(1);
+        when(vagas.buscarLivreParaReserva()).thenReturn(Optional.empty());
+        for (int tentativa = 0; tentativa < 3; tentativa++) {
+            servico.reservar(new MensagemEnvelope<>(UUID.randomUUID(), ticketId, TipoMensagem.RESERVAR_VAGA,
+                Instant.now(), new ReservarVagaRequest(ticketId)));
+        }
+        verify(vagas, times(3)).buscarLivreParaReserva();
+        verify(resultados, times(3)).registrarIndisponibilidade(ticketId, MotivoIndisponibilidade.SEM_VAGAS);
+    }
+
+    @Test
+    void novaTentativaPodeReservarVagaQueFicouLivre() {
+        reserva.registrarIndisponibilidade();
+        var vaga = new Vaga("A-2", UUID.randomUUID(), UUID.randomUUID());
+        when(vagas.buscarLivreParaReserva()).thenReturn(Optional.of(vaga));
+        servico.reservar(envelope);
+        assertThat(reserva.obterSituacao()).isEqualTo(ReservaSituacao.RESERVADA);
+        verify(resultados).registrarReserva(ticketId, vaga.obterId(), "A-2");
     }
 
     @Test
