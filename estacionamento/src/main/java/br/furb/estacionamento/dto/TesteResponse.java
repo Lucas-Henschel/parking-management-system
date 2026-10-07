@@ -16,6 +16,15 @@ public record TesteResponse(
     String observacao
 ) {
     public record PagamentoTeste(String metodo, JsonNode pagamento) {}
-    public record Evidencia(Instant instante, String etapa, String servico, String metodo,
-        String rota, Integer statusHttp, Object requisicao, Object resultado) {}
+
+    public record Evidencia(
+        Instant instante,
+        String etapa,
+        String servico,
+        String metodo,
+        String rota,
+        Integer statusHttp,
+        Object requisicao,
+        Object resultado
+    ) {}
 }
