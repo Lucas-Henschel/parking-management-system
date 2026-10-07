@@ -12,7 +12,6 @@ import br.furb.pagamento.enums.PagamentoStatus;
 import br.furb.pagamento.exception.MetodoPagamentoInvalidoException;
 import br.furb.pagamento.exception.PagamentoNaoEncontradoException;
 import br.furb.pagamento.exception.PeriodoInvalidoException;
-import br.furb.pagamento.messaging.PagamentoPublisher;
 import br.furb.pagamento.repository.MensagemProcessadaRepository;
 import br.furb.pagamento.repository.MetodoPagamentoRepository;
 import br.furb.pagamento.repository.PagamentoRepository;
@@ -20,8 +19,6 @@ import br.furb.pagamento.repository.PagamentoRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -31,11 +28,13 @@ import java.util.UUID;
 
 @Service
 public class PagamentoService {
+    private static final String TIPO_CALCULAR_PAGAMENTO = "CALCULAR_PAGAMENTO";
+
     private final PagamentoRepository pagamentoRepository;
     private final MetodoPagamentoRepository metodoPagamentoRepository;
     private final MensagemProcessadaRepository mensagemProcessadaRepository;
 
-    private final PagamentoPublisher pagamentoPublisher;
+    private final RegistroEventoService registroEventoService;
 
     private final BigDecimal valorHora;
 
@@ -43,13 +42,13 @@ public class PagamentoService {
         PagamentoRepository pagamentoRepository,
         MetodoPagamentoRepository metodoPagamentoRepository,
         MensagemProcessadaRepository mensagemProcessadaRepository,
-        PagamentoPublisher pagamentoPublisher,
+        RegistroEventoService registroEventoService,
         @Value("${pagamento.valor-hora:10.00}") BigDecimal valorHora
     ) {
         this.pagamentoRepository = pagamentoRepository;
         this.metodoPagamentoRepository = metodoPagamentoRepository;
         this.mensagemProcessadaRepository = mensagemProcessadaRepository;
-        this.pagamentoPublisher = pagamentoPublisher;
+        this.registroEventoService = registroEventoService;
         this.valorHora = valorHora;
     }
 
@@ -63,8 +62,8 @@ public class PagamentoService {
             throw new IllegalArgumentException("A tarifa por hora deve ser maior que zero");
         }
 
-        long minutos = Duration.between(request.entrada(), request.saida()).toMinutes();
-        long horas = Math.max(1, (minutos + 59) / 60);
+        long segundos = Duration.between(request.entrada(), request.saida()).toSeconds();
+        long horas = Math.max(1, (segundos + 3599) / 3600);
 
         BigDecimal valor = valorHora.multiply(BigDecimal.valueOf(horas)).setScale(2, RoundingMode.HALF_UP);
         pagamentoRepository.inserirCalculadoSeAusente(UUID.randomUUID(), request.ticketId(), valor, Instant.now());
@@ -80,7 +79,7 @@ public class PagamentoService {
             pagamento.getStatus()
         );
 
-        publicarAposCommit(() -> pagamentoPublisher.publicarPagamentoCalculado(evento));
+        registroEventoService.registrarPagamentoCalculado(evento);
         return evento;
     }
 
@@ -90,6 +89,8 @@ public class PagamentoService {
      */
     @Transactional
     public void processarCalculo(MensagemEnvelope<CalcularPagamentoRequest> envelope) {
+        validarEnvelope(envelope);
+
         if (mensagemProcessadaRepository.registrarSeAusente(envelope.messageId(), Instant.now()) == 0) {
             return;
         }
@@ -123,7 +124,7 @@ public class PagamentoService {
             salvo.getStatus()
         );
 
-        publicarAposCommit(() -> pagamentoPublisher.publicarPagamentoConfirmado(evento));
+        registroEventoService.registrarPagamentoConfirmado(evento);
         
         return PagamentoResponse.from(salvo);
     }
@@ -138,13 +139,21 @@ public class PagamentoService {
             .map(PagamentoResponse::from)
             .orElseThrow(() -> new PagamentoNaoEncontradoException(ticketId));
     }
-    
-    private void publicarAposCommit(Runnable action) {
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                action.run();
-            }
-        });
+
+    /**
+     * Dados inválidos lançam IllegalArgumentException, que não é retentado e vai direto para a DLQ.
+     */
+    private void validarEnvelope(MensagemEnvelope<CalcularPagamentoRequest> envelope) {
+        if (envelope == null
+            || envelope.messageId() == null
+            || envelope.correlationId() == null
+            || envelope.payload() == null
+            || !TIPO_CALCULAR_PAGAMENTO.equals(envelope.tipo())) {
+            throw new IllegalArgumentException("Envelope inválido para " + TIPO_CALCULAR_PAGAMENTO + ".");
+        }
+
+        if (!envelope.correlationId().equals(envelope.payload().ticketId())) {
+            throw new IllegalArgumentException("correlationId deve ser igual ao ticketId.");
+        }
     }
 }

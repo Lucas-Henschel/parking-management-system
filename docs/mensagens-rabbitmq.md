@@ -101,6 +101,7 @@ Datas em ISO-8601 UTC (`Instant`), valores em decimal (`20.00`) e IDs em UUID.
     "pagamentoId": "9d3f4e21-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
     "ticketId": "b4a2c9d0-7e55-4f0b-8a3c-1d2e3f4a5b6c",
     "valor": 20.00,
+    "data": "2026-10-04T14:00:01Z",
     "status": "CALCULADO"
   }
 }

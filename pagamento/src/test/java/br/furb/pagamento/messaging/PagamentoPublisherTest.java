@@ -1,93 +1,69 @@
 package br.furb.pagamento.messaging;
 
-import br.furb.pagamento.config.RabbitMQConfig;
-import br.furb.pagamento.dto.MensagemEnvelope;
-import br.furb.pagamento.dto.PagamentoCalculadoEvent;
-import br.furb.pagamento.dto.PagamentoConfirmadoEvent;
-import br.furb.pagamento.enums.PagamentoStatus;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-
-import java.math.BigDecimal;
+import br.furb.pagamento.entity.EventoPendente;
 import java.time.Instant;
 import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageDeliveryMode;
+import org.springframework.amqp.core.ReturnedMessage;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 
-@ExtendWith(MockitoExtension.class)
 class PagamentoPublisherTest {
+    private EventoPendente evento() {
+        return new EventoPendente(UUID.randomUUID(), "pagamento.calculado", "{}", Instant.now());
+    }
 
-    @Mock
-    private RabbitTemplate rabbitTemplate;
-
-    private PagamentoPublisher publisher;
-
-    @BeforeEach
-    void setUp() {
-        publisher = new PagamentoPublisher(rabbitTemplate);
+    private RabbitTemplate configurarBroker(boolean confirmou, boolean devolveu) {
+        RabbitTemplate rabbit = mock(RabbitTemplate.class);
+        doAnswer(chamada -> {
+            Message mensagem = chamada.getArgument(2);
+            assertThat(mensagem.getMessageProperties().getDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
+            assertThat(mensagem.getMessageProperties().getContentType()).isEqualTo("application/json");
+            CorrelationData confirmacao = chamada.getArgument(3);
+            if (devolveu) confirmacao.setReturned(new ReturnedMessage(mensagem, 312, "NO_ROUTE",
+                    "parking.exchange", "pagamento.calculado"));
+            confirmacao.getFuture().complete(new CorrelationData.Confirm(confirmou, null));
+            return null;
+        }).when(rabbit).send(eq("parking.exchange"), eq("pagamento.calculado"), any(Message.class), any(CorrelationData.class));
+        return rabbit;
     }
 
     @Test
-    void devePublicarPagamentoCalculadoNoRabbitMQ() {
-        UUID ticketId = UUID.randomUUID();
-        PagamentoCalculadoEvent evento = new PagamentoCalculadoEvent(
-                UUID.randomUUID(),
-                ticketId,
-                new BigDecimal("20.00"),
-                Instant.parse("2026-10-03T12:00:00Z"),
-                PagamentoStatus.CALCULADO
-        );
-
-        publisher.publicarPagamentoCalculado(evento);
-
-        ArgumentCaptor<MensagemEnvelope> captor = ArgumentCaptor.forClass(MensagemEnvelope.class);
-        
-        verify(rabbitTemplate).convertAndSend(
-                eq(RabbitMQConfig.EXCHANGE),
-                eq(RabbitMQConfig.PAGAMENTO_CALCULADO_ROUTING_KEY),
-                captor.capture()
-        );
-        
-        MensagemEnvelope envelope = captor.getValue();
-        assertNotNull(envelope.messageId());
-        assertEquals(ticketId, envelope.correlationId());
-        assertEquals("PAGAMENTO_CALCULADO", envelope.tipo());
-        assertEquals(evento, envelope.payload());
+    void deveAceitarConfirmacaoDoBroker() {
+        var rabbit = configurarBroker(true, false);
+        assertThatCode(() -> new PagamentoPublisher(rabbit).publicar(evento())).doesNotThrowAnyException();
     }
-    
+
     @Test
-    void devePublicarPagamentoConfirmadoNoRabbitMQ() {
-        UUID ticketId = UUID.randomUUID();
-        PagamentoConfirmadoEvent evento = new PagamentoConfirmadoEvent(
-                UUID.randomUUID(),
-                ticketId,
-                new BigDecimal("20.00"),
-                "PIX",
-                PagamentoStatus.PAGO
-        );
+    void deveRejeitarNackOuMensagemSemRota() {
+        var evento = evento();
+        assertThatThrownBy(() -> new PagamentoPublisher(configurarBroker(false, false)).publicar(evento))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new PagamentoPublisher(configurarBroker(true, true)).publicar(evento))
+                .isInstanceOf(IllegalStateException.class);
+    }
 
-        publisher.publicarPagamentoConfirmado(evento);
+    @Test
+    void deveUsarOIdDoEventoComoMessageId() {
+        var evento = evento();
+        var rabbit = mock(RabbitTemplate.class);
+        doAnswer(chamada -> {
+            Message mensagem = chamada.getArgument(2);
+            assertThat(mensagem.getMessageProperties().getMessageId()).isEqualTo(evento.obterId().toString());
+            CorrelationData confirmacao = chamada.getArgument(3);
+            confirmacao.getFuture().complete(new CorrelationData.Confirm(true, null));
+            return null;
+        }).when(rabbit).send(any(String.class), any(String.class), any(Message.class), any(CorrelationData.class));
 
-        ArgumentCaptor<MensagemEnvelope> captor = ArgumentCaptor.forClass(MensagemEnvelope.class);
-        
-        verify(rabbitTemplate).convertAndSend(
-                eq(RabbitMQConfig.EXCHANGE),
-                eq(RabbitMQConfig.PAGAMENTO_CONFIRMADO_ROUTING_KEY),
-                captor.capture()
-        );
-        
-        MensagemEnvelope envelope = captor.getValue();
-        assertNotNull(envelope.messageId());
-        assertEquals(ticketId, envelope.correlationId());
-        assertEquals("PAGAMENTO_CONFIRMADO", envelope.tipo());
-        assertEquals(evento, envelope.payload());
+        assertThatCode(() -> new PagamentoPublisher(rabbit).publicar(evento)).doesNotThrowAnyException();
     }
 }
