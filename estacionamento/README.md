@@ -53,12 +53,22 @@ ticket e a liberação da vaga. A reserva, o cálculo e a liberação usam o Rab
 A chamada aguarda a simulação terminar e retorna as etapas, IDs dos tickets e
 pagamentos. Em falha, retorna HTTP 502 com o erro e o progresso parcial. Os dados
 não são apagados; cada execução usa nomes e placas novos. Execute sem outros
-clientes alterando as vagas ao mesmo tempo. Chamadas simultâneas retornam 409.
+clientes alterando as vagas ao mesmo tempo. Chamadas simultâneas retornam 409
+(o controle vale por instância: não rode com mais de uma réplica do estacionamento).
+
+A simulação confere a ocupação de todas as vagas ativas, então só roda em um banco
+sem vagas livres: se já houver vagas livres, ela para antes de cadastrar qualquer
+coisa. Como a execução ocupa as vagas que cria, rodar de novo em seguida funciona.
+
+A chamada é síncrona e pode levar alguns minutos (cada etapa espera até
+`teste.espera-segundos`). Chame direto na porta do serviço e, se usar `curl`, sem
+`--max-time` curto. Atrás de um proxy (Nginx tem 60 s por padrão), ela pode ser cortada.
 
 O campo `evidencias` apresenta uma sequência com horário, etapa, serviço, método,
 rota, status HTTP, requisição e resultado. Os mesmos resultados aparecem nos logs
-com `[teste <execucao>]`. Cada consulta durante a espera fica registrada; ao
-concluir, o registro `ESPERA` informa a quantidade de consultas e a duração.
+com `[teste <execucao>]`. As consultas repetidas durante uma espera aparecem só nos
+logs; em `evidencias`, o registro `ESPERA` informa a quantidade de consultas, a duração
+e se a espera concluiu.
 
 São consultados os cadastros antes de preparar a estrutura e cada item após criá-lo;
 as vagas livres antes e depois de cada entrada; o ticket e sua vaga após a reserva;
@@ -73,13 +83,15 @@ que o ticket continua encerrado. As consultas ficam em `evidencias`.
 
 Para comprovar as buscas reais, nos logs do serviço vagas filtre pelo `ticketId`
 do carro excedente: devem aparecer 3 registros `Buscando vaga livre` e 3 registros
-`Busca sem vagas`, com `messageId` diferentes. Consultas GET podem não capturar os
+`Busca sem vagas`, com `messageId` diferentes. As três tentativas são
+imediatas, uma após a outra, sem espera entre elas. Consultas GET podem não capturar os
 estados intermediários se o RabbitMQ processar as respostas rapidamente; os logs
-das buscas e o contador final complementam essas evidências. Reinicie também o
-serviço vagas para carregar a alteração que permite nova busca após indisponibilidade.
+das buscas e o contador final complementam essas evidências.
 
 As URLs podem ser configuradas com `teste.estacionamento-url`, `teste.vagas-url`
-e `teste.pagamento-url` (padrão: localhost nas portas 8081, 8082 e 8083).
+e `teste.pagamento-url` (padrão: localhost nas portas 8081, 8082 e 8083). Dentro de contêineres, `localhost`
+é o próprio serviço; por isso o `docker-compose.escala.yml` define `TESTE_VAGAS_URL` e
+`TESTE_PAGAMENTO_URL` apontando para os outros serviços.
 `teste.espera-segundos` controla a espera por cada resultado assíncrono (padrão: 30).
 As chamadas HTTP dessa rota apenas simulam as ações do cliente nas APIs; a
 integração entre os serviços no fluxo de negócio continua via RabbitMQ.

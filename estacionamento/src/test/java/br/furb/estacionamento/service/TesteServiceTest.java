@@ -16,6 +16,18 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.HashSet;
 import java.time.Instant;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import br.furb.estacionamento.controller.TesteController;
+import br.furb.estacionamento.exception.EstadoInvalidoException;
+import br.furb.estacionamento.exception.GlobalExceptionHandler;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -32,6 +44,8 @@ class TesteServiceTest {
     private boolean confirmarReserva = true;
     private int consultasPendentes;
     private TesteService teste;
+    private volatile CountDownLatch saudeRecebida;
+    private volatile CountDownLatch liberarSaude;
 
     @BeforeEach
     void iniciar() throws IOException {
@@ -87,6 +101,70 @@ class TesteServiceTest {
     }
 
     @Test
+    void execucaoSimultaneaLancaEstadoInvalidoESegueDepoisDeTerminar() throws Exception {
+        saudeRecebida = new CountDownLatch(1);
+        liberarSaude = new CountDownLatch(1);
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var primeira = executor.submit(teste::executar);
+            assertTrue(saudeRecebida.await(5, TimeUnit.SECONDS));
+            var erro = assertThrows(EstadoInvalidoException.class, teste::executar);
+            assertEquals("Já existe uma simulação em andamento", erro.getMessage());
+            saudeRecebida = null;
+            liberarSaude.countDown();
+            assertTrue(primeira.get(30, TimeUnit.SECONDS).sucesso());
+        } finally {
+            liberarSaude.countDown();
+            executor.shutdownNow();
+        }
+        assertTrue(teste.executar().sucesso(), "Deve permitir nova execução depois que a primeira terminou");
+    }
+
+    @Test
+    void controllerRetorna200NoSucessoE502NaFalha() throws Exception {
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new TesteController(teste))
+            .setControllerAdvice(new GlobalExceptionHandler()).build();
+        mvc.perform(post("/teste")).andExpect(status().isOk());
+        saudavel = false;
+        mvc.perform(post("/teste")).andExpect(status().isBadGateway());
+    }
+
+    @Test
+    void controllerRetorna409ComSimulacaoEmAndamento() throws Exception {
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new TesteController(teste))
+            .setControllerAdvice(new GlobalExceptionHandler()).build();
+        saudeRecebida = new CountDownLatch(1);
+        liberarSaude = new CountDownLatch(1);
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(teste::executar);
+            assertTrue(saudeRecebida.await(5, TimeUnit.SECONDS));
+            mvc.perform(post("/teste")).andExpect(status().isConflict());
+        } finally {
+            saudeRecebida = null;
+            liberarSaude.countDown();
+            executor.shutdown();
+            executor.awaitTermination(30, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void recusaExecutarQuandoJaExistemVagasLivresDeOutrosDados() {
+        var existente = new LinkedHashMap<String, Object>();
+        existente.put("id", UUID.randomUUID().toString());
+        existente.put("status", "LIVRE");
+        existente.put("blocoId", "bloco-existente");
+        cadastros.get("/vagas").add(existente);
+        cadastros.get("/setores").add(new LinkedHashMap<>(Map.of("id", "setor-existente", "status", "ATIVO")));
+        cadastros.get("/blocos").add(new LinkedHashMap<>(Map.of("id", "bloco-existente", "setorId", "setor-existente", "status", "ATIVO")));
+        var resultado = teste.executar();
+        assertFalse(resultado.sucesso());
+        assertTrue(resultado.erro().contains("vagas livres que não pertencem à simulação"));
+        assertEquals(1, cadastros.get("/vagas").size(), "Não deve cadastrar nada");
+        assertTrue(resultado.tickets().isEmpty());
+    }
+
+    @Test
     void servicoIndisponivelFalhaAntesDeCriarDados() {
         saudavel = false;
         var resultado = teste.executar();
@@ -108,8 +186,11 @@ class TesteServiceTest {
         assertEquals(1, resultado.tickets().size());
         assertEquals(12, cadastros.get("/vagas").size());
         assertTrue(resultado.pagamentos().isEmpty());
-        assertTrue(resultado.evidencias().stream().anyMatch(e -> e.rota().startsWith("/tickets/")
-            && e.resultado().toString().contains("PENDENTE")));
+        assertTrue(resultado.evidencias().stream().anyMatch(e -> e.metodo().equals("ESPERA")
+            && Boolean.FALSE.equals(((Map<?, ?>) e.resultado()).get("concluida"))));
+        assertTrue(resultado.evidencias().stream().noneMatch(e -> e.etapa().startsWith("Entrada e reserva")
+            && e.metodo().equals("GET") && e.rota().startsWith("/tickets/")),
+            "As consultas repetidas da espera não devem entrar nas evidências");
     }
 
     private void responder(HttpExchange chamada) throws IOException {
@@ -119,6 +200,10 @@ class TesteServiceTest {
         Object resposta;
         int status = 200;
         if (rota.equals("/actuator/health")) {
+            if (saudeRecebida != null) {
+                saudeRecebida.countDown();
+                try { liberarSaude.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
             status = saudavel ? 200 : 503;
             resposta = Map.of("status", saudavel ? "UP" : "DOWN");
         } else if (cadastros.containsKey(rota)) {
