@@ -34,3 +34,10 @@ build/
 
 ### Local env ###
 .env
+
+### Teste de escala ###
+escala/resultados/
+
+### superpowers ###
+.superpowers/
+/docs/superpowers/
