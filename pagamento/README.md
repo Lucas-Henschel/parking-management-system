@@ -28,4 +28,6 @@ Métodos aceitos: `DINHEIRO`, `PIX`, `CARTAO_CREDITO` e `CARTAO_DEBITO`.
 | `PAGAMENTO_CALCULADO` | publica | `pagamento.calculado` | consumida pelo estacionamento |
 | `PAGAMENTO_CONFIRMADO` | publica | `pagamento.confirmado` | consumida pelo estacionamento |
 
+Os eventos publicados passam por uma outbox (tabela `evento_pendente`), gravada na mesma transação do pagamento e enviada ao RabbitMQ em segundo plano, com confirmação do broker e nova tentativa em caso de falha.
+
 Formato do envelope e exemplos de payload em [docs/mensagens-rabbitmq.md](../docs/mensagens-rabbitmq.md).

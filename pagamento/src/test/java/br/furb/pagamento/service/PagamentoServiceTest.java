@@ -7,13 +7,9 @@ import br.furb.pagamento.enums.PagamentoStatus;
 import br.furb.pagamento.exception.MetodoPagamentoInvalidoException;
 import br.furb.pagamento.exception.PagamentoNaoEncontradoException;
 import br.furb.pagamento.exception.PeriodoInvalidoException;
-import br.furb.pagamento.messaging.PagamentoPublisher;
 import br.furb.pagamento.repository.MetodoPagamentoRepository;
 import br.furb.pagamento.repository.PagamentoRepository;
 import br.furb.pagamento.repository.MensagemProcessadaRepository;
-import org.junit.jupiter.api.AfterEach;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,7 +37,7 @@ class PagamentoServiceTest {
     private MetodoPagamentoRepository metodoPagamentoRepository;
 
     @Mock
-    private PagamentoPublisher pagamentoPublisher;
+    private RegistroEventoService registroEventoService;
 
     @Mock
     private MensagemProcessadaRepository mensagemProcessadaRepository;
@@ -50,24 +46,13 @@ class PagamentoServiceTest {
 
     @BeforeEach
     void setUp() {
-        TransactionSynchronizationManager.initSynchronization();
         service = new PagamentoService(
                 pagamentoRepository,
                 metodoPagamentoRepository,
                 mensagemProcessadaRepository,
-                pagamentoPublisher,
+                registroEventoService,
                 new BigDecimal("10.00")
         );
-    }
-
-    @AfterEach
-    void tearDown() {
-        TransactionSynchronizationManager.clear();
-    }
-
-    /** Simula o commit da transação: dispara os callbacks afterCommit registrados. */
-    private void commit() {
-        TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
     }
 
     private void cenarioCalculo(UUID ticketId, BigDecimal valor) {
@@ -94,9 +79,7 @@ class PagamentoServiceTest {
         assertEquals(ticketId, resultado.ticketId());
         assertEquals(PagamentoStatus.CALCULADO, resultado.status());
 
-        verify(pagamentoPublisher, never()).publicarPagamentoCalculado(any());
-        commit();
-        verify(pagamentoPublisher).publicarPagamentoCalculado(resultado);
+        verify(registroEventoService).registrarPagamentoCalculado(resultado);
     }
 
     @Test
@@ -111,6 +94,45 @@ class PagamentoServiceTest {
     }
 
     @Test
+    void deveCobrarHoraAdicionalQuandoSoSobraremSegundos() {
+        UUID ticketId = UUID.randomUUID();
+        Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
+        cenarioCalculo(ticketId, new BigDecimal("20.00"));
+
+        service.calcularPagamento(new CalcularPagamentoRequest(ticketId, entrada, entrada.plus(3601, ChronoUnit.SECONDS)));
+
+        assertEquals(new BigDecimal("20.00"), valorGravado(ticketId));
+    }
+
+    @Test
+    void deveCobrarUmaHoraQuandoPermanecerExatamenteUmaHora() {
+        UUID ticketId = UUID.randomUUID();
+        Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
+        cenarioCalculo(ticketId, new BigDecimal("10.00"));
+
+        service.calcularPagamento(new CalcularPagamentoRequest(ticketId, entrada, entrada.plus(60, ChronoUnit.MINUTES)));
+
+        assertEquals(new BigDecimal("10.00"), valorGravado(ticketId));
+    }
+
+    @Test
+    void deveRejeitarEnvelopeInvalidoSemRegistrarAMensagem() {
+        UUID ticketId = UUID.randomUUID();
+        Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
+        CalcularPagamentoRequest payload = new CalcularPagamentoRequest(ticketId, entrada, entrada.plus(1, ChronoUnit.HOURS));
+
+        assertThrows(IllegalArgumentException.class, () -> service.processarCalculo(null));
+        assertThrows(IllegalArgumentException.class, () -> service.processarCalculo(
+                new MensagemEnvelope<>(UUID.randomUUID(), ticketId, "CALCULAR_PAGAMENTO", Instant.now(), null)));
+        assertThrows(IllegalArgumentException.class, () -> service.processarCalculo(
+                new MensagemEnvelope<>(UUID.randomUUID(), ticketId, "OUTRO_TIPO", Instant.now(), payload)));
+        assertThrows(IllegalArgumentException.class, () -> service.processarCalculo(
+                new MensagemEnvelope<>(UUID.randomUUID(), UUID.randomUUID(), "CALCULAR_PAGAMENTO", Instant.now(), payload)));
+
+        verifyNoInteractions(mensagemProcessadaRepository, pagamentoRepository, registroEventoService);
+    }
+
+    @Test
     void deveRejeitarSaidaAnteriorOuIgualAEntrada() {
         Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
         CalcularPagamentoRequest request = new CalcularPagamentoRequest(UUID.randomUUID(), entrada, entrada);
@@ -121,7 +143,7 @@ class PagamentoServiceTest {
         );
 
         assertEquals("A saída deve ser posterior à entrada", exception.getMessage());
-        verifyNoInteractions(metodoPagamentoRepository, pagamentoRepository, pagamentoPublisher);
+        verifyNoInteractions(metodoPagamentoRepository, pagamentoRepository, registroEventoService);
     }
 
     @Test
@@ -133,7 +155,7 @@ class PagamentoServiceTest {
         service.processarCalculo(new MensagemEnvelope<>(messageId, ticketId, "CALCULAR_PAGAMENTO", Instant.now(),
                 new CalcularPagamentoRequest(ticketId, Instant.now().minus(1, ChronoUnit.HOURS), Instant.now())));
 
-        verifyNoInteractions(pagamentoRepository, pagamentoPublisher);
+        verifyNoInteractions(pagamentoRepository, registroEventoService);
     }
 
     @Test
@@ -169,9 +191,7 @@ class PagamentoServiceTest {
         assertEquals(PagamentoStatus.PAGO, response.status());
         assertEquals(metodoPagamentoId, response.metodoPagamentoId());
 
-        verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
-        commit();
-        verify(pagamentoPublisher).publicarPagamentoConfirmado(any());
+        verify(registroEventoService).registrarPagamentoConfirmado(any());
     }
     
     @Test
@@ -190,7 +210,7 @@ class PagamentoServiceTest {
         assertEquals(metodoPagamentoId, response.metodoPagamentoId());
         
         verify(pagamentoRepository, never()).save(any());
-        verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
+        verify(registroEventoService, never()).registrarPagamentoConfirmado(any());
     }
     
     @Test
@@ -201,7 +221,7 @@ class PagamentoServiceTest {
 
         assertThrows(PagamentoNaoEncontradoException.class, () -> service.pagar(ticketId, new PagarRequest("PIX")));
         verify(pagamentoRepository, never()).save(any());
-        verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
+        verify(registroEventoService, never()).registrarPagamentoConfirmado(any());
     }
     
     @Test
@@ -216,7 +236,7 @@ class PagamentoServiceTest {
 
         assertThrows(MetodoPagamentoInvalidoException.class, () -> service.pagar(ticketId, new PagarRequest("PIX")));
         verify(pagamentoRepository, never()).save(any());
-        verify(pagamentoPublisher, never()).publicarPagamentoConfirmado(any());
+        verify(registroEventoService, never()).registrarPagamentoConfirmado(any());
     }
 
     @Test

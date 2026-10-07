@@ -1,53 +1,55 @@
 package br.furb.pagamento.messaging;
 
 import br.furb.pagamento.config.RabbitMQConfig;
-import br.furb.pagamento.dto.MensagemEnvelope;
-import br.furb.pagamento.dto.PagamentoCalculadoEvent;
-import br.furb.pagamento.dto.PagamentoConfirmadoEvent;
+import br.furb.pagamento.entity.EventoPendente;
 
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageDeliveryMode;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
-import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Component
 public class PagamentoPublisher {
-    private final RabbitTemplate rabbitTemplate;
+    private final RabbitTemplate rabbit;
 
-    public PagamentoPublisher(RabbitTemplate rabbitTemplate) {
-        this.rabbitTemplate = rabbitTemplate;
+    public PagamentoPublisher(RabbitTemplate rabbit) {
+        this.rabbit = rabbit;
     }
 
-    public void publicarPagamentoCalculado(PagamentoCalculadoEvent evento) {
-        MensagemEnvelope<PagamentoCalculadoEvent> envelope = new MensagemEnvelope<>(
-            UUID.randomUUID(),
-            evento.ticketId(),
-            "PAGAMENTO_CALCULADO",
-            Instant.now(),
-            evento
-        );
+    public void publicar(EventoPendente evento) {
+        MessageProperties propriedades = new MessageProperties();
+        propriedades.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        propriedades.setContentEncoding(StandardCharsets.UTF_8.name());
+        propriedades.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+        propriedades.setMessageId(evento.obterId().toString());
 
-        rabbitTemplate.convertAndSend(
+        CorrelationData confirmacao = new CorrelationData(evento.obterId().toString());
+
+        rabbit.send(
             RabbitMQConfig.EXCHANGE,
-            RabbitMQConfig.PAGAMENTO_CALCULADO_ROUTING_KEY,
-            envelope
-        );
-    }
-
-    public void publicarPagamentoConfirmado(PagamentoConfirmadoEvent evento) {
-        MensagemEnvelope<PagamentoConfirmadoEvent> envelope = new MensagemEnvelope<>(
-            UUID.randomUUID(),
-            evento.ticketId(),
-            "PAGAMENTO_CONFIRMADO",
-            Instant.now(),
-            evento
+            evento.obterRota(),
+            new Message(evento.obterEnvelope().getBytes(StandardCharsets.UTF_8), propriedades),
+            confirmacao
         );
 
-        rabbitTemplate.convertAndSend(
-            RabbitMQConfig.EXCHANGE,
-            RabbitMQConfig.PAGAMENTO_CONFIRMADO_ROUTING_KEY,
-            envelope
-        );
+        try {
+            var resultado = confirmacao.getFuture().get(10, TimeUnit.SECONDS);
+
+            if (!resultado.ack() || confirmacao.getReturned() != null) {
+                throw new IllegalStateException("O broker não confirmou o roteamento da mensagem " + evento.obterId());
+            }
+        } catch (InterruptedException erro) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Publicação interrompida.", erro);
+        } catch (ExecutionException | TimeoutException erro) {
+            throw new IllegalStateException("Não foi possível confirmar a publicação.", erro);
+        }
     }
 }

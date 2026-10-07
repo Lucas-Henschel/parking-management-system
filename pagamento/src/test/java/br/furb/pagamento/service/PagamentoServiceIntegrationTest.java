@@ -4,14 +4,13 @@ import br.furb.pagamento.dto.CalcularPagamentoRequest;
 import br.furb.pagamento.dto.MensagemEnvelope;
 import br.furb.pagamento.dto.PagarRequest;
 import br.furb.pagamento.enums.PagamentoStatus;
-import br.furb.pagamento.messaging.PagamentoPublisher;
+import br.furb.pagamento.repository.EventoPendenteRepository;
 import br.furb.pagamento.repository.MensagemProcessadaRepository;
 import br.furb.pagamento.repository.PagamentoRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -29,15 +28,12 @@ import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 
 /**
  * Testes contra um PostgreSQL real: exercitam o lock pessimista, o UNIQUE em ticket_id e a
  * idempotência por messageId, que não podem ser validados com mocks.
  */
-@SpringBootTest(properties = "spring.rabbitmq.listener.simple.auto-startup=false")
+@SpringBootTest(properties = {"spring.rabbitmq.listener.simple.auto-startup=false", "pagamento.outbox.habilitada=false"})
 @Testcontainers
 class PagamentoServiceIntegrationTest {
 
@@ -56,8 +52,14 @@ class PagamentoServiceIntegrationTest {
     @Autowired
     private MensagemProcessadaRepository mensagemProcessadaRepository;
 
-    @MockitoBean
-    private PagamentoPublisher publisher;
+    @Autowired
+    private EventoPendenteRepository eventoPendenteRepository;
+
+    private long eventosDoTicket(UUID ticketId, String tipo) {
+        return eventoPendenteRepository.findAll().stream()
+                .filter(e -> e.obterEnvelope().contains(ticketId.toString()) && e.obterEnvelope().contains("\"" + tipo + "\""))
+                .count();
+    }
 
     private CalcularPagamentoRequest requisicao(UUID ticketId) {
         Instant entrada = Instant.parse("2026-10-03T10:00:00Z");
@@ -88,7 +90,7 @@ class PagamentoServiceIntegrationTest {
         }
 
         assertEquals(1, pagamentoRepository.findAll().stream().filter(p -> p.getTicketId().equals(ticketId)).count());
-        verify(publisher, times(THREADS)).publicarPagamentoCalculado(any());
+        assertEquals(THREADS, eventosDoTicket(ticketId, "PAGAMENTO_CALCULADO"));
     }
 
     @Test
@@ -100,7 +102,7 @@ class PagamentoServiceIntegrationTest {
             assertEquals(PagamentoStatus.PAGO, ((br.furb.pagamento.dto.PagamentoResponse) f.get()).status());
         }
 
-        verify(publisher, times(1)).publicarPagamentoConfirmado(any());
+        assertEquals(1, eventosDoTicket(ticketId, "PAGAMENTO_CONFIRMADO"));
         assertEquals(PagamentoStatus.PAGO, pagamentoRepository.findByTicketId(ticketId).orElseThrow().getStatus());
     }
 
@@ -119,7 +121,7 @@ class PagamentoServiceIntegrationTest {
         }
 
         assertTrue(mensagemProcessadaRepository.existsById(messageId));
-        verify(publisher, times(1)).publicarPagamentoCalculado(any());
+        assertEquals(1, eventosDoTicket(ticketId, "PAGAMENTO_CALCULADO"));
     }
 
     @Test
@@ -138,5 +140,23 @@ class PagamentoServiceIntegrationTest {
         }
 
         assertTrue(mensagemProcessadaRepository.findById(messageId).isEmpty());
+    }
+
+    @Test
+    void calculoGravaOEventoNaMesmaTransacaoDoPagamento() {
+        UUID ticketId = UUID.randomUUID();
+        UUID messageId = UUID.randomUUID();
+
+        service.processarCalculo(new MensagemEnvelope<>(
+                messageId, ticketId, "CALCULAR_PAGAMENTO", Instant.now(), requisicao(ticketId)));
+
+        var evento = eventoPendenteRepository.findAll().stream()
+                .filter(e -> e.obterEnvelope().contains(ticketId.toString()))
+                .findFirst().orElseThrow();
+
+        assertEquals("pagamento.calculado", evento.obterRota());
+        assertEquals(null, evento.obterPublicadoEm());
+        assertTrue(evento.obterEnvelope().contains("\"correlationId\":\"" + ticketId + "\""));
+        assertTrue(mensagemProcessadaRepository.existsById(messageId));
     }
 }
